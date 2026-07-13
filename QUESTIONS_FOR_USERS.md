@@ -1,8 +1,9 @@
 # Questions for End Users
 
 A running list of functionality questions that need an answer from the actual
-domain experts (the submitter, the submitter, a team member, a reviewer, etc.)
-rather than something Jacob/Claude can resolve through design discussion alone.
+domain experts (the project submitters, reviewers, etc. — see AGENTS.md's
+Project Overview for their roles) rather than something Jacob/Claude can
+resolve through design discussion alone.
 The intent is to accrue these and ask them in a batch, rather than trickling
 requests one at a time.
 

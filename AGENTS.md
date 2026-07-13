@@ -15,8 +15,8 @@ computational pipeline.
 
 ### Sub-project 1 — Protein Purity Quantification (`data/daria_data`)
 
-- Submitter: the submitter ([email removed]), Process Development Scientist II,
-  Formulation & Purification Discovery (Process Development).
+- Submitter: a Process Development Scientist II, Formulation & Purification
+  Discovery (Process Development).
 - Problem: protein purity is currently assessed by eye from a single SDS-PAGE
   (Coomassie-stained) gel lane. Purification handoffs come with quantitative
   targets (e.g. "&gt;95% purity"), but there's no fast in-team way to produce an
@@ -33,8 +33,8 @@ computational pipeline.
 
 ### Sub-project 2 — Activity Gel Extraction (`data/gia_data`)
 
-- Submitters: the submitter ([email removed]); team includes Jacob Miller and
-  a team member.
+- Submitters: a Process Development team; the working team includes Jacob
+  Miller.
 - Problem: restriction enzyme stability is assessed by running digests in
   96-well plate format across many time points and buffer conditions, then
   imaging the resulting gel. An operator currently manually reads every one of
@@ -58,7 +58,7 @@ computational pipeline.
     contrast, exposure) — normalization across images is nontrivial.
   - Gels must be sectioned correctly to separate samples from ladders, and
     samples must be correctly mapped back to well position.
-  - a reviewer (comment on the proposal) suggested the tool should accept a
+  - A reviewer (comment on the proposal) suggested the tool should accept a
     substrate sequence and cross-check against expected fragment size(s),
     ideally reusing the existing NEBcutter tool rather than reimplementing
     fragment analysis.
@@ -213,7 +213,7 @@ without cause:
   expected absolute fragment size(s). This means **no digest-condition data
   needs to be supplied by the user for the core classification** — it's
   fully self-contained from the image batch alone, consistent with the
-  purity workflow's CLI-driven philosophy above. the reviewer's original ask
+  purity workflow's CLI-driven philosophy above. The reviewer's original ask
   (accept a substrate sequence, cross-check against NEBcutter-predicted
   fragment sizes) becomes an optional future validation layer, not a
   requirement — revisit if baseline-relative comparison turns out to miss
@@ -423,7 +423,8 @@ they're non-obvious and expensive to rediscover:
   protein-identity notes in Data Inventory above. Only 1 image (HpyCH4IV)
   has both a clean file and a confirmed target MW to validate against
   end-to-end; a second guess (assuming `251017_..._FusionProtein.tif` was
-  the submitter's FCE-T7 RNAP fusion) was tested and found wrong, so it's been
+  the FCE-T7 RNAP fusion referenced in the submitter's email) was tested and
+  found wrong, so it's been
   retracted rather than reported as a finding. Getting confirmed MWs for the
   other identified proteins (Esp3I, IdeS Protease, TelA, R-218/TET3 fusion,
   CL_ASR29) is now tracked as a question for end users
@@ -593,8 +594,8 @@ recorded here specifically so they aren't lost or re-litigated from scratch.
 No open internal design/architecture questions remain as of this update
 (2026-07-13). This section is for questions Jacob and Claude can resolve
 through design discussion alone. Questions that need an answer from the
-domain-expert end users (the submitter, the submitter, a team member, the reviewer, etc.) instead live in
-`QUESTIONS_FOR_USERS.md` — check there for the current accrued list before
+domain-expert end users (the project submitters, reviewers, etc.) instead
+live in `QUESTIONS_FOR_USERS.md` — check there for the current accrued list before
 assuming a piece of domain knowledge (e.g. "is this ladder the standard one")
 rather than guessing.
 
@@ -701,9 +702,10 @@ rather than guessing.
 ## Questions for End Users
 
 `QUESTIONS_FOR_USERS.md` is a running list of functionality questions that
-need an answer from the domain-expert end users (the submitter, the submitter, a team member, the reviewer,
-etc.) rather than something resolvable through design discussion alone — the
-intent is to accrue these and ask them in a batch rather than one at a time.
+need an answer from the domain-expert end users (the project submitters,
+reviewers, etc.) rather than something resolvable through design discussion
+alone — the intent is to accrue these and ask them in a batch rather than
+one at a time.
 Add to it as new questions surface; don't resolve them by guessing.
 
 ## Working Agreements
@@ -720,11 +722,11 @@ Add to it as new questions surface; don't resolve them by guessing.
   activity workflow until that's explicitly requested — finishing purity
   doesn't imply a green light to move on automatically.
 - **Document thoroughly enough to explain the whole system to non-implementing
-  stakeholders later.** Jacob needs to be able to walk the submitter/the submitter/a team member/
-  the reviewer through what was built and why at the end, not just hand them working
-  code. Every Design Decision entry should carry its rationale (the "why"), not
-  just the decision itself — this applies to future edits too, not only what's
-  already written.
+  stakeholders later.** Jacob needs to be able to walk the project submitters
+  and reviewers through what was built and why at the end, not just hand them
+  working code. Every Design Decision entry should carry its rationale (the
+  "why"), not just the decision itself — this applies to future edits too,
+  not only what's already written.
 - **Robust testing is required, not optional polish.** See the "Modular,
   swappable architecture" and "Robust testing" entries in Design Decisions —
   every pipeline stage needs unit tests, plus integration tests against the
