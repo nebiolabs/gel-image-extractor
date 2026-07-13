@@ -30,10 +30,17 @@ outside domain knowledge or a business/scope call.
 
 ## Purity workflow
 
+- [x] **P7719's exact per-band kDa values** — **RESOLVED 2026-07-13.** User
+  provided NEB's own labeled product gel image for P7719, giving the
+  complete band list: 250, 180, 130, 95, 72, 55, 43, 34, 26, 17, 10 kDa
+  (matches everything independently found via web research: 11 bands total,
+  orange reference at 72 kDa, green at 26 kDa, range 10-250 kDa — text
+  sources alone couldn't confirm the individual list). Now seeded in
+  `core.ladder.KNOWN_LADDERS["P7719"]`; `--ladder P7719` works as a real
+  option.
 - [ ] **Which ladder(s) do these assays actually use — is it always the same
-  one, or does it vary by team/assay/scientist?** Broadened 2026-07-13 from a
-  narrower P7719-specific question. This matters across workflows, not just
-  purity:
+  one, or does it vary by team/assay/scientist?** Broadened 2026-07-13 from
+  the narrower P7719-band-values question above (now resolved). Still open:
   - *Purity:* is P7719 the de facto standard for most protein purity gels at
     NEB? If so, we could default `--ladder` to it and only require the flag
     when a different ladder was actually used, reducing the common-case CLI
@@ -43,14 +50,6 @@ outside domain knowledge or a business/scope call.
     used; TfiI and the Titers dataset don't have a recorded ladder identity
     that we've confirmed — is it the same ladder across all restriction/
     activity work, or does it vary by assay?
-  - Also relevant: we couldn't find NEB's official published list of the 11
-    individual band sizes for P7719 (10-250 kDa) via public product pages/
-    spec sheets/protocol page while researching this — only that it has 11
-    bands with orange/green reference bands at 72 kDa and 26 kDa. If P7719
-    turns out to be the standard, we'll need the exact per-band kDa values
-    from an internal source (Certificate of Analysis for a specific lot, or
-    someone who has the physical insert/box) to seed the ladder lookup table
-    correctly — this is a real data gap, not just a "which ladder" question.
   *(Raised 2026-07-13, broadened same day while starting purity workflow
   implementation.)*
 - [ ] **How should we handle low-contrast/washed-out source gel scans**
@@ -86,5 +85,7 @@ outside domain knowledge or a business/scope call.
 
 ---
 
-*Last updated: 2026-07-13. See `AGENTS.md` for full design context behind
-these questions.*
+*Last updated: 2026-07-13 (P7719 band-size question resolved this update; see
+`AGENTS.md` "Known Limitations" for newer open engineering items that don't
+need end-user input). See `AGENTS.md` for full design context behind these
+questions.*

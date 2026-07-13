@@ -125,6 +125,18 @@ without cause:
   as purity %. This works off the sample lane alone — it does not depend on a
   known-purity standards ladder being present, since several example gels
   don't have one (`01_HpyCH4IV...png`, `02_FCE_T7...jpg`).
+  - **Reconfirmed 2026-07-13, after end-user input on current qualitative
+    practice:** end users described their current manual method as
+    eyeballing the contaminant "load" in a lane and bracketing it against
+    other reference lanes (i.e., something closer to the deferred
+    embedded-standards-ladder idea than to a direct single-lane ratio). We
+    discussed this explicitly and **decided to keep the single-lane
+    densitometric ratio as the sole/primary method** — internally consistent
+    against one ladder — rather than pivot to standards-bracketing as the
+    primary approach. Flagged so this isn't silently re-litigated: the two
+    methods measure different things (a direct measurement vs. a comparative
+    judgment), and the choice to keep the direct-ratio method was deliberate,
+    not an oversight.
 - **Target band identification: MW-based, primary; heuristic only as an
   explicit opt-in escape hatch (decided 2026-07-13).**
   - Primary method: calibrate the ladder lane (known NEB ladder lookup table,
@@ -133,9 +145,29 @@ without cause:
     known expected MW, within a tolerance (placeholder: ±15-20% of expected
     MW — approximate on purpose, to be tuned empirically against the example
     gels once real code exists, not decided precisely up front).
-  - **If the ladder can't be calibrated** (unrecognized ladder and no
-    `--ladder-bands` given), the tool refuses to process by default (hard
-    error) rather than silently degrading to a less reliable method.
+  - **Ladder calibration relaxed to best-effort subset matching (revised
+    2026-07-13, superseding the original "exact band count match" rule
+    below).** Requiring every known ladder band to be individually detected
+    turned out to be a much higher precision bar than real practice needs —
+    a bench scientist anchors off whichever 1-2 nearby rungs are visible, not
+    a full curve through every rung. It was also unworkable in practice: it
+    failed on every real image tried, for two different reasons (some bands
+    genuinely merge at the high-MW end due to SDS-PAGE's log-linear
+    migration — a well-known, near-universal compression artifact, not
+    randomness; other images over-detect noise as extra "bands"). New rule:
+    calibrate from however many bands ARE confidently detected, anchored to
+    the best-resolved (lowest-MW) subset of the known ladder (assume any
+    shortfall is at the high-MW end, since that's physically where
+    resolution is worst); if more bands are detected than known sizes, keep
+    only the most prominent ones by area. Guardrails so this doesn't silently
+    miscalibrate: requires at least 3 matched bands, and rejects the fit if
+    its R² is below 0.85 (loosened from an initial 0.9 after confirming a
+    real 0.89-R² fit — degraded only by 2 merged-blob points — still
+    correctly located a real target band; see Implementation Status).
+  - **If the ladder still can't be calibrated** (too few bands detected, or
+    fit quality too poor even with the relaxed matching above), the tool
+    refuses to process by default (hard error) rather than silently
+    degrading to a less reliable method.
   - **`--allow-heuristic` is an explicit, non-default escape hatch.** It never
     triggers automatically. When passed, it permits falling back to a
     largest/darkest-band heuristic so the user can still get *some* number out
@@ -271,11 +303,19 @@ same day design finished, so no date-of-completion note beyond "2026-07-13").
 - **Package layout:** `src/gel_extractor/{core,purity}/` (src-layout),
   entry point `gelx` (`gelx purity analyze <image> --target-mw KDA [...]`).
   Run via `uv run gelx ...`; tests via `uv run pytest`.
-- **Test suite:** 27 tests passing — unit tests per `core` module (synthetic,
+- **Test suite:** 31 tests passing — unit tests per `core` module (synthetic,
   deterministic data), an end-to-end pipeline test via a synthetic gel image
   file, CLI tests (table/CSV/JSON/error paths), and integration tests
   against a real example gel image, including the dilution-series
   self-consistency check.
+- **`KNOWN_LADDERS["P7719"]` is now seeded and verified** (`core/ladder.py`)
+  — `[250, 180, 130, 95, 72, 55, 43, 34, 26, 17, 10]` kDa. Verified against
+  NEB's own labeled product gel image for P7719 (user-provided), which
+  matches everything independently found via web research (11 bands total;
+  orange reference band at 72 kDa, green at 26 kDa; range 10-250 kDa) — text
+  sources alone couldn't confirm the individual band list, but the labeled
+  image resolved it. `--ladder P7719` now works as a real named option, not
+  just a placeholder.
 - **`--help` gotcha fixed:** argparse only expands `%%` → `%` in per-argument
   `help=` text, not in a parser's `description=` — a literal `%%` was
   showing up in `gelx purity analyze --help` until this was caught by
@@ -308,13 +348,10 @@ they're non-obvious and expensive to rediscover:
   threshold fraction 0.03 (of the baseline-corrected column profile's peak),
   baseline rolling-window 51px (same default as band detection, for
   consistency), lane top-margin crop 5%, MW tolerance 17.5% (midpoint of the
-  ±15-20% range). Found via direct experimentation against
-  `decodeon_gel_images/Protein Purity/8.6.25 Protein Purity.tif`, not derived
-  from first principles — expect further tuning as more real gels are run.
-- **`KNOWN_LADDERS` ships empty** (`core/ladder.py`) — deliberately not
-  seeded with a guessed P7719 band list, per the unresolved question in
-  `QUESTIONS_FOR_USERS.md`. `--ladder-bands` is required for MW-matching
-  until a verified entry is added.
+  ±15-20% range), ladder-calibration minimum 3 matched bands and minimum R²
+  0.85. Found via direct experimentation against several real images in
+  `decodeon_gel_images/Protein Purity/` — expect further tuning as more real
+  gels are run.
 - **A per-lane "not-found" state was added**, extending (not contradicting)
   the original target-band-identification decision: that decision covered
   what happens when the *ladder itself* can't be calibrated (hard error
@@ -330,9 +367,67 @@ they're non-obvious and expensive to rediscover:
   bands below the detection threshold first, which inflates apparent purity
   as dilution increases. The dilution-series self-consistency test passes
   but with a loose bound (~70 points; observed spread was ~59) — documented
-  inline in `tests/test_purity_integration.py`. Expected to tighten
-  substantially once MW-matching can be validated against a verified ladder
-  (blocked on the `KNOWN_LADDERS` gap above).
+  inline in `tests/test_purity_integration.py`.
+- **Ladder calibration against real P7719 data validated, then immediately
+  surfaced two more real issues** (2026-07-13, after seeding `KNOWN_LADDERS`):
+  tested MW-matching against `8.6.25 Protein Purity.tif` end to end. The
+  ladder itself calibrated (R²=0.886, above the relaxed 0.85 bar) and the
+  fitted curve's predicted position for the target MW (29.267 kDa) landed
+  right next to a real detected band — good evidence the relaxed calibration
+  produces a genuinely useful curve, not just a technically-passing one.
+  But: (1) one sample lane produced 98 "detected bands," almost certainly
+  noise, not real bands — our band-detection prominence threshold is purely
+  *relative* to that lane's own signal max, which breaks down on very
+  faint/low-signal lanes where scan noise can exceed "5% of a tiny max"; a
+  "match" that lane produced (29.1 vs. 29.267 kDa) was very likely
+  coincidental given 98 near-random candidate points, not a real detection.
+  (2) the other 9 (visually reasonable, 3-9 bands each) sample lanes found
+  **no** band within tolerance of the target MW at all — closest misses were
+  ~24 kDa (~18% low, just outside the ±17.5% tolerance), suggesting the
+  calibration curve may have a real systematic low bias, plausibly from the
+  2 merged-blob points also being included in the fit. **Neither issue is
+  fixed yet** — see Known Limitations below.
+
+## Known Limitations — Flagged for Later
+
+Real, open items surfaced during implementation that haven't been resolved
+yet. Don't silently fix or dismiss these without discussing first — they're
+recorded here specifically so they aren't lost or re-litigated from scratch.
+
+- **Reporting precision is currently overstated.** `purity_percent` is
+  rounded to 1 decimal place unconditionally. Given everything above (a
+  calibration curve with real, imperfect fit quality; band detection that
+  can swing from too-insensitive to wildly-too-sensitive depending on lane
+  signal strength; a possible systematic bias not yet explained), 1 decimal
+  place implies more precision than the pipeline currently has. Discussed
+  2026-07-13: **plan is to round to the nearest integer instead**, but this
+  hasn't been implemented yet — treat it as agreed direction, not done.
+- **Lane capture is a fixed vertical rectangle, with no smiling/curvature or
+  bleed-over handling.** `Lane.crop` uses one `(x_start, x_end)` column range
+  applied uniformly across the entire image height. This doesn't account for
+  "gel smiling" (a common, well-known artifact where edge lanes migrate
+  faster/slower than center lanes, curving bands across the gel) and doesn't
+  guard against bleed-over from a neighboring lane when bands are wide/
+  diffuse (already observed: real merged-blob band widths over 100px this
+  session). Not yet checked whether real curvature is actually present in
+  our example images, and not yet mitigated. Options range from a cheap
+  inward margin on each lane's edges to full per-row adaptive lane tracing —
+  deferred until confirmed necessary against real images.
+- **~18% systematic low-MW-matching miss, cause unconfirmed.** On the one
+  real image tested with the verified P7719 ladder, 9 of 10 sample lanes
+  found no band within tolerance of the 29.267 kDa target; the closest
+  misses clustered around ~24 kDa. Plausible explanation is calibration bias
+  from the 2 merged high-MW ladder points, but this hasn't been confirmed —
+  worth investigating (e.g. excluding anomalously wide/merged bands from the
+  calibration fit entirely, or widening tolerance, or testing against more
+  real images) before trusting real MW-matched results.
+- **Per-lane band-detection noise robustness is unresolved** — the
+  purely-relative prominence threshold (fraction of that lane's own max)
+  breaks down on very faint/low-signal lanes, producing dozens of spurious
+  "bands" from noise (98, observed). This is a distinct problem from the
+  ladder-lane calibration robustness work already done, and could currently
+  cause a false "mw-matched" result via coincidental noise rather than a
+  real detection — not yet mitigated.
 
 ## Open Questions
 

@@ -6,23 +6,26 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (27 tests passing). **Activity
+**Purity workflow: implemented and tested** (31 tests passing). **Activity
 workflow: not started.** See `AGENTS.md` for full project scope, data
-inventory, working agreements, design decisions, and implementation notes
-(including real findings from running this against real gel images), and
-`diagrams/program-flow.png` (or the `.mmd` source) for the current
-architecture sketch.
+inventory, working agreements, design decisions, implementation notes
+(including real findings from running this against real gel images), and a
+"Known Limitations" section tracking open issues that shouldn't be silently
+fixed or forgotten. `diagrams/program-flow.png` (or the `.mmd` source) has
+the current architecture sketch.
 
 ```
 uv sync
 uv run gelx purity analyze "data/decodeon_gel_images/Protein Purity/8.6.25 Protein Purity.tif" \
-  --target-mw 29.267 --allow-heuristic
+  --target-mw 29.267 --ladder P7719
 uv run pytest
 ```
 
-No verified ladder band sizes exist yet (see `QUESTIONS_FOR_USERS.md`), so
-real runs currently need `--allow-heuristic` or an explicit `--ladder-bands`
-list rather than `--ladder <name>`.
+`--ladder P7719` is now a real, verified option (see `AGENTS.md`). Ladder
+calibration is deliberately lenient — it works from however many bands are
+confidently detected rather than requiring every known band to resolve —
+but real MW-matching still has open accuracy questions (see AGENTS.md's
+Known Limitations), so treat results as directional for now, not exact.
 
 ## What this project does (planned)
 
@@ -81,11 +84,19 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 27 passing tests covering all of this.
+  currently has 31 passing tests covering all of this.
 - Running this against real images surfaced some non-obvious findings (a
   data file that's actually a screenshot with UI chrome, real gel photos not
-  being on a white background, a known bias in the heuristic fallback) —
-  see `AGENTS.md`'s "Implementation Status" section for the full detail.
+  being on a white background, a known bias in the heuristic fallback, and —
+  after seeding a verified P7719 ladder — a possible systematic MW-matching
+  bias and a band-detection noise-robustness gap on faint lanes) — see
+  `AGENTS.md`'s "Implementation Status" and "Known Limitations" sections for
+  the full detail.
+- **Purity calculation is confirmed to stay a direct single-lane
+  densitometric ratio** (target band area / total lane area, calibrated
+  against one ladder), not a comparison/bracketing against reference lanes —
+  even though that's closer to current manual practice per end-user input.
+  Deliberate choice, see `AGENTS.md`.
 - No git actions (commit/push) happen without explicit user consent — see
   `AGENTS.md`'s "Working Agreements".
 - Open questions that need a domain expert's input (not just an engineering

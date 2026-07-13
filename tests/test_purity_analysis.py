@@ -7,7 +7,9 @@ from gel_extractor.purity.analysis import LadderNotCalibratedError, analyze_imag
 
 
 def _flat_calibration() -> LadderCalibration:
-    return LadderCalibration(positions=np.array([0.0, 100.0]), mws=np.array([100.0, 10.0]), slope=-0.01, intercept=2.0)
+    return LadderCalibration(
+        positions=np.array([0.0, 100.0]), mws=np.array([100.0, 10.0]), slope=-0.01, intercept=2.0, r_squared=1.0
+    )
 
 
 def _profile_with_bands(height: int, bands: list[tuple[float, float]]) -> np.ndarray:
