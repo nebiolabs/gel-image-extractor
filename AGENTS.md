@@ -125,20 +125,42 @@ without cause:
   as purity %. This works off the sample lane alone — it does not depend on a
   known-purity standards ladder being present, since several example gels
   don't have one (`01_HpyCH4IV...png`, `02_FCE_T7...jpg`).
+- **Target band identification: MW-based, primary; heuristic only as an
+  explicit opt-in escape hatch (decided 2026-07-13).**
+  - Primary method: calibrate the ladder lane (known NEB ladder lookup table,
+    e.g. P7719, or a user-supplied `--ladder-bands` override), then identify
+    the target band as whichever detected band falls nearest the protein's
+    known expected MW, within a tolerance (placeholder: ±15-20% of expected
+    MW — approximate on purpose, to be tuned empirically against the example
+    gels once real code exists, not decided precisely up front).
+  - **If the ladder can't be calibrated** (unrecognized ladder and no
+    `--ladder-bands` given), the tool refuses to process by default (hard
+    error) rather than silently degrading to a less reliable method.
+  - **`--allow-heuristic` is an explicit, non-default escape hatch.** It never
+    triggers automatically. When passed, it permits falling back to a
+    largest/darkest-band heuristic so the user can still get *some* number out
+    when calibration isn't possible, but the result must be clearly flagged as
+    lower-confidence in the output (e.g. a `confidence: heuristic` vs.
+    `confidence: mw-matched` field) — never presented as equivalent to an
+    MW-matched result.
+  - Embedded purity-standard lanes (50/75/88/94/97/98/99%, when present in a
+    gel like the EcoRI-HF/BtgZI QC reports) are an optional secondary
+    validation check against the computed number, not required for and not
+    part of the core calibration — exact mechanism for using them is a future
+    detail, not blocking for MVP.
+- **CLI usability requirement: flags must be clearly self-documented in
+  `--help`.** Since end users aren't CLI-comfortable (per discussion), every
+  flag — `--lane`, `--ladder-bands`, `--allow-heuristic`, and any added later —
+  needs a clear, complete description in the tool's own help output, not just
+  in external docs. This applies from the first CLI implementation onward,
+  not as a later polish pass.
 
 ## Open Questions
 
-- **How to identify "the target band" within a lane** when multiple bands are
-  present: (a) heuristic — assume it's the darkest/most intense band, or
-  (b) MW-based — use the protein's known expected molecular weight (available
-  for the 4 example proteins via the submitter's email) plus ladder calibration to
-  find the band nearest that expected size. (b) is more principled but depends
-  on reliable ladder identification/calibration, which the submitter flagged as
-  inconsistent (QC report gels don't record which ladder was used). Not yet
-  decided.
-- Whether/how the known-purity standard ladder lanes (50/75/88/94/97/98/99%),
-  when present, should be used — e.g. as a validation/sanity-check against the
-  direct densitometry result, since the core computation doesn't require them.
+No open design questions remain as of this update (2026-07-13). The next
+things likely to surface are implementation-level details (e.g. tuning the
+MW-match tolerance against real example gels) rather than open architecture
+questions.
 
 ## Data Inventory
 

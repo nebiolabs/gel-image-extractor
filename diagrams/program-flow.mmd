@@ -1,8 +1,8 @@
 %% program-flow.mmd
 %% NOTE: No implementation exists yet. This reflects design decisions made as
-%% of 2026-07-13 (see AGENTS.md "Design Decisions" / "Open Questions"), not
-%% real code — it should be replaced with an actual class/sequence diagram
-%% once implementation exists.
+%% of 2026-07-13 (see AGENTS.md "Design Decisions"), not real code — it should
+%% be replaced with an actual class/sequence diagram once implementation
+%% exists.
 
 flowchart TD
     Note["⚠ No code yet — reflects decided design,<br/>see AGENTS.md Design Decisions"]
@@ -18,7 +18,10 @@ flowchart TD
     PurityLabel["purity workflow<br/>MVP — build first"]
     subgraph PurityWF[" "]
         AutoLane["Auto-detect lanes<br/>(column intensity projection)"]
-        TargetID["Identify target band<br/>⚠ open question: heuristic vs MW-based"]
+        LadderCal{"Ladder calibrated?<br/>(known ladder, or<br/>--ladder-bands given)"}
+        MWMatch["Find band nearest<br/>expected MW<br/>(±15-20% tolerance, placeholder)"]
+        Heuristic["--allow-heuristic:<br/>fallback to largest/darkest band<br/>(flagged low-confidence)"]
+        ErrorOut["Error: cannot calibrate ladder —<br/>requires --ladder-bands or<br/>--allow-heuristic"]
         PurityCalc["purity % =<br/>target band area / total lane area"]
         PurityOut["CLI output: per-lane table (default)<br/>or single lane via --lane N"]
     end
@@ -38,5 +41,9 @@ flowchart TD
     BandDet --> GridDet
     PurityLabel -.-> AutoLane
     ActivityLabel -.-> GridDet
-    AutoLane --> TargetID --> PurityCalc --> PurityOut
+    AutoLane --> LadderCal
+    LadderCal -- yes --> MWMatch --> PurityCalc
+    LadderCal -- "no, heuristic allowed" --> Heuristic --> PurityCalc
+    LadderCal -- "no, no flag given" --> ErrorOut
+    PurityCalc --> PurityOut
     GridDet --> ExpectedFrag --> Classify --> Heatmap

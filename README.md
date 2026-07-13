@@ -29,9 +29,18 @@ detection & calibration, band/peak detection); each has its own workflow and
 output on top of that core. Purity is being built first. See `AGENTS.md`'s
 "Design Decisions" section for the full reasoning.
 
+For purity specifically, target-band identification is MW-based by default
+(ladder calibrated via a known lookup table or a `--ladder-bands` override);
+if the ladder can't be calibrated, the tool refuses to guess unless
+`--allow-heuristic` is explicitly passed. See `AGENTS.md` for the full
+rationale.
+
 ## Development
 
 - No language/dependency tooling has been chosen yet beyond Python.
-- Interface: CLI first, structured so a UI can be layered on later.
+- Interface: CLI first, structured so a UI can be layered on later. Every
+  flag (`--lane`, `--ladder-bands`, `--allow-heuristic`, etc.) must be clearly
+  documented in the CLI's own `--help` output, not just in external docs —
+  end users of this tool aren't expected to be CLI-comfortable.
 - No git actions (commit/push) happen without explicit user consent — see
   `AGENTS.md`'s "Working Agreements".
