@@ -74,19 +74,31 @@ outside domain knowledge or a business/scope call.
   than reporting/aggregating across the whole dilution series, (c) something
   else, or (d) is there a recommended dilution range end users already use
   in practice to avoid this? *(Raised 2026-07-13.)*
-- [ ] **Need confirmed molecular weights for proteins identified (by visible
-  in-image label) in `decodeon_gel_images/Protein Purity/`, to expand
-  end-to-end purity-accuracy validation beyond the single confirmed case we
-  have (HpyCH4IV).** Copy/paste list:
+- [x] **Need confirmed molecular weights for proteins identified (by visible
+  in-image label) in `decodeon_gel_images/Protein Purity/`** — **RESOLVED
+  2026-07-13.** User provided confirmed MWs:
   ```
-  Esp3I
-  IdeS Protease
-  TelA
-  R-218 (TET3 fusion)
-  CL_ASR29
+  Esp3I - 61708.19 Da (61.708 kDa)
+  IdeS Protease - 36825.91 Da (36.826 kDa)
+  TelA - 39358.70 Da (39.359 kDa)
+  TET3 (R-218) - 58218.74 Da (58.219 kDa)
+  CL-ASR29 - 44599.87 Da (44.600 kDa)
   ```
-  Separately, 4 images have **no legible protein label at all** — identity
-  unknown, not just MW: `6.12.26 PDEV1718 Protein Purity.tif`,
+  Now seeded in `AGENTS.md` Data Inventory. Ran all 5 through `gelx purity
+  analyze` against their matching real images (see Implementation Status) —
+  results are mixed, not a clean validation win: TelA's ladder lane fails to
+  calibrate at all (genuinely low-contrast/low-band-count in that scan), the
+  `251017_..._FusionProtein.tif` TET3 lot returns "not-found" for every
+  lane despite the ladder reporting a good R², and Esp3I/IdeS/CL-ASR29 show
+  purity swinging inconsistently across what should be a self-consistent
+  dilution series. Only `10.31.25 PDEV1437.tif` (the other TET3 lot) lands
+  on a consistent, correct-looking matched MW. This looks like it's
+  surfacing the still-unvalidated lane-capture/over-segmentation concern
+  (see Known Limitations) rather than a target-MW problem — under
+  investigation.
+
+  Separately, 4 images still have **no legible protein label at all** —
+  identity unknown, not just MW: `6.12.26 PDEV1718 Protein Purity.tif`,
   `260612_ProteinPurity.tif`, `260407_protein_purity.tif`,
   `4.16.26 Protein Purity.tif`. *(Raised 2026-07-13 — see `AGENTS.md` Data
   Inventory for the full per-file breakdown, including which file shows

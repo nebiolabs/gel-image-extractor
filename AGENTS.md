@@ -443,6 +443,113 @@ they're non-obvious and expensive to rediscover:
   range or whether the most-concentrated ("Total") lane should be treated
   as the authoritative measurement rather than aggregating across the whole
   series.
+- **Real end-to-end accuracy test against 5 newly-confirmed MWs
+  (2026-07-13) found real failures, not a validation win.** Ran
+  `gelx purity analyze` with each confirmed MW (Esp3I, IdeS Protease, TelA,
+  TET3/R-218, CL_ASR29 — see Data Inventory) against its matching image:
+  - `7.17.24 PDEV772 Conc Stock.jpg` (TelA): ladder **fails to calibrate at
+    all** — confirmed by direct visual inspection, that lane's bands are
+    genuinely faint/low-count in this scan, not a detection-parameter issue.
+  - `251017_..._FusionProtein.tif` (TET3/R-218, one lot): ladder reports a
+    good fit (R²=0.98) but **every sample lane comes back "not-found."**
+    Diagnosed by dumping per-lane calibrated band MWs directly: lane
+    detection found **13 lanes where the image visually has 9** (1 ladder +
+    8 labeled dilution lanes), and nearly every "lane" carries a spurious
+    band calibrating to ~300 kDa — consistent with loading-well/aggregate
+    smear leaking into the lane crop rather than being excluded (the
+    top-margin crop is still just a fixed 5%, never validated against real
+    wells — see below), compounded by the lane-count over-detection itself.
+    This looks like real evidence for the lane-capture limitation below, not
+    a target-MW problem.
+  - Esp3I, IdeS Protease, and CL_ASR29 all calibrate and match a plausible
+    MW, but **purity swings inconsistently across what should be a
+    self-consistent dilution series** (e.g. Esp3I: 3%, 46%, 7%, 5% across
+    4 matched lanes) — a materially different failure mode than the
+    already-documented dilution-detectability trend (which is a smooth,
+    monotonic drift, not this kind of noise). Not yet root-caused.
+  - `10.31.25 PDEV1437.tif` (TET3/R-218, the other lot) is the one clean
+    result: matched MW lands right on target (58.2-58.4 vs. 58.219 expected)
+    consistently across lanes, though absolute purity is low (1-8%,
+    decreasing with dilution) — plausible for a real low-purity prep, but
+    unverified.
+  - **Net effect: the pipeline's real per-image accuracy is worse than the
+    single-image (HpyCH4IV) validation suggested.** Under active
+    investigation — likely connects to the lane-capture/over-segmentation
+    limitation below rather than requiring new target-MW-matching logic.
+- **Lane over-segmentation investigation (2026-07-13) — two approaches
+  tried, both reverted; not yet solved, root cause narrowed down
+  considerably.** Root mechanism confirmed by direct inspection: `detect_lanes`
+  collapses the *entire image height* into one column-sum profile before any
+  lane boundary exists (`signal.sum(axis=0)` in `core/lanes.py`), and
+  `Lane.crop` then applies that column range as a fixed-width rectangle over
+  the full height — no row-by-row awareness anywhere in lane detection.
+  Diagnosed on `251017_..._FusionProtein.tif` (13 lanes detected vs. 9 real:
+  1 ladder + 8 labeled dilution lanes):
+  - **Attempt 1 — row-banding + majority vote.** Split image height into 3
+    bands, ran column-sum detection independently per band, kept a column
+    only if ≥2 of 3 bands agreed it was "in a lane." Rationale going in: a
+    real lane runs the gel's full length so should have majority support,
+    while a localized artifact (dust, a corner) shouldn't. **Backfired**:
+    directly cropping and viewing the suspect region showed it was actually
+    the gel slab's own *physical right edge* (gel fading into background
+    paper), which — being a literal physical boundary — runs the *entire*
+    image height and got votes from all 3 bands, while a real sample lane's
+    doublet band turned out to be vertically *localized* near the top of
+    the gel (mostly blank below it) and lost the majority vote. Net result:
+    lane count dropped 13→12, but a real lane was lost and the actual
+    artifact was kept — a regression, not a fix. Reverted.
+  - **Attempt 2 — explicit gel-edge trimming.** Added `detect_gel_extent()`:
+    sample a background reference from the image's own outer border, compute
+    each column's median intensity across full height, classify columns by
+    nearest-centroid distance (background reference vs. overall-median
+    "interior" reference, using absolute deviation rather than assuming a
+    brightness direction — confirmed necessary and sufficient by checking a
+    real `data/gia_data` image, which is inverted-contrast: black background,
+    bright gel/bands, the opposite of purity's white-background/dark-band
+    convention), then walk outward from the image's horizontal center to find
+    the contiguous gel region, trimmed inward by a fixed margin. Wired into
+    `analyze_image()` to scope `detect_lanes` to the gel's interior only.
+    **Real, verified improvement on 10 of 11 images**: every one of the 11
+    `decodeon_gel_images/Protein Purity/` images calibrated afterward
+    (previously 10/11 — this fixed TelA's total calibration failure too),
+    and lane counts dropped meaningfully on most images (e.g. IdeS 12→7,
+    CL_ASR29 10→8) by excluding the physical gel edge from the column-sum
+    profile. On the fusion-protein image specifically: 13→12, confirmed by
+    direct crop that the isolated far-right dust artifact was gone; one
+    residual sliver-artifact remained (the edge is slightly *curved/slanted*
+    down the image height, so one global cutoff can't perfectly exclude it
+    at every row — tried intersecting per-band extents to chase the curve,
+    but individual bands with less real content gave noisy/unreliable
+    results, one falling back to "couldn't classify" entirely). **However:
+    directly re-running all 5 confirmed-MW proteins plus the HpyCH4IV
+    baseline surfaced a real regression** — HpyCH4IV (our only
+    externally-validated ground truth) went from a stable 29-48% purity
+    across 8/10 matching lanes (34.6-34.9 kDa, matches memory of the
+    original fix) down to 1-6% purity across only 3/7 matching lanes
+    (32.6-33.3 kDa) after edge-trimming. Lane count for this image dropped
+    11→8 (untrimmed vs. trimmed) and lane widths/positions shifted
+    materially (e.g. one lane went from width 100 to width 57, another from
+    103 to 114 with a different position) — **not yet root-caused**: could
+    be real lanes getting merged together (changing which "lane index" a
+    given physical sample lands on, and/or inflating a lane's total-area
+    denominator by merging two real lanes' content), a good real lane being
+    partially clipped by the new trim boundary, or something else. Reverted
+    both attempts (`git checkout` on `core/lanes.py` and
+    `purity/analysis.py`) rather than leave a regressed HpyCH4IV result in
+    place — **repo is back to the last known-good state (36 tests passing,
+    commit `38327d7`)**.
+  - **To resume:** the gel-edge-trimming *idea* (direction-agnostic
+    nearest-centroid classification, verified conceptually sound against
+    both contrast conventions) still looks like the right general direction
+    — it fixed real problems on 10/11 images including TelA's calibration.
+    Before re-attempting: root-cause the HpyCH4IV regression specifically
+    (compare untrimmed vs. trimmed lane boundaries for that image — recorded
+    above — to see exactly which real lanes got merged/clipped and why) and
+    fix that *before* re-validating across all 11 images plus the 5
+    confirmed-MW proteins again. Don't re-attempt row-banding/majority-vote
+    (Attempt 1) — it's now a confirmed dead end for this specific problem,
+    given real bands can be vertically localized while physical gel edges
+    are not, which is the opposite of what that approach assumed.
 
 ## Known Limitations — Flagged for Later
 
@@ -451,16 +558,23 @@ yet. Don't silently fix or dismiss these without discussing first — they're
 recorded here specifically so they aren't lost or re-litigated from scratch.
 
 - **Lane capture is a fixed vertical rectangle, with no smiling/curvature or
-  bleed-over handling.** `Lane.crop` uses one `(x_start, x_end)` column range
-  applied uniformly across the entire image height. This doesn't account for
-  "gel smiling" (a common, well-known artifact where edge lanes migrate
-  faster/slower than center lanes, curving bands across the gel) and doesn't
+  bleed-over handling — actively being investigated, not yet fixed.**
+  `Lane.crop` uses one `(x_start, x_end)` column range applied uniformly
+  across the entire image height; `detect_lanes` similarly collapses the
+  whole height into one column-sum profile before any lane boundary exists.
+  This doesn't account for "gel smiling" (edge lanes migrating faster/slower
+  than center lanes, curving bands across the gel — confirmed present, at
+  least as a curved/slanted *physical gel edge*, on a real image), doesn't
   guard against bleed-over from a neighboring lane when bands are wide/
-  diffuse (already observed: real merged-blob band widths over 100px this
-  session). Not yet checked whether real curvature is actually present in
-  our example images, and not yet mitigated. Options range from a cheap
-  inward margin on each lane's edges to full per-row adaptive lane tracing —
-  deferred until confirmed necessary against real images.
+  diffuse (real merged-blob band widths over 100px observed), and doesn't
+  exclude loading-well/aggregate smear at the top of a lane (still just a
+  fixed 5% top-margin crop, never validated). **Two fix attempts tried and
+  reverted 2026-07-13 — full detail, including a regression found on our one
+  ground-truth-validated image (HpyCH4IV), in Implementation Status's "Lane
+  over-segmentation investigation" entry.** Read that before re-attempting a
+  fix — it records which approach is a confirmed dead end (row-banding/
+  majority-vote) and which is promising but has an unresolved regression to
+  root-cause first (explicit gel-edge trimming).
 - **Dilution-detectability threshold skews purity at high dilution —
   confirmed real, not yet mitigated.** As dilution increases, faint
   contaminant bands drop below the detection floor before the target band
@@ -542,15 +656,20 @@ rather than guessing.
     the submitter's email); the rest have a visible identity label but **no
     confirmed MW yet** — tracked as a new question for end users in
     `QUESTIONS_FOR_USERS.md`:
-    - `2.4.25 PDEV981 Protein Purity.jpg` — Esp3I (PID940/PDEV981)
-    - `9.20.24 PDEV829 Conc Stock.jpg` — IdeS Protease (PDEV829)
-    - `7.17.24 PDEV772 Conc Stock.jpg` — TelA (NEB3606, PDEV772)
+    - `2.4.25 PDEV981 Protein Purity.jpg` — Esp3I (PID940/PDEV981),
+      **confirmed MW 61,708.19 Da**
+    - `9.20.24 PDEV829 Conc Stock.jpg` — IdeS Protease (PDEV829),
+      **confirmed MW 36,825.91 Da**
+    - `7.17.24 PDEV772 Conc Stock.jpg` — TelA (NEB3606, PDEV772),
+      **confirmed MW 39,358.70 Da**
     - `10.31.25 PDEV1437.tif` / `251017_..._FusionProtein.tif` — same
-      construct, two lots/dates: R-218, a TET3 fusion (PDEV1437 / PID1384).
-      **Not** the FCE-T7 RNAP fusion from the submitter's email — an earlier guess
-      assuming that was wrong (confirmed by testing: no band anywhere near
-      200,717 Da), corrected once actually checked.
-    - `1.15.25 Concentrated Stock.jpg` — CL_ASR29 (PID926/PDEV946)
+      construct, two lots/dates: R-218, a TET3 fusion (PDEV1437 / PID1384),
+      **confirmed MW 58,218.74 Da**. **Not** the FCE-T7 RNAP fusion from
+      the submitter's email — an earlier guess assuming that was wrong (confirmed by
+      testing: no band anywhere near 200,717 Da), corrected once actually
+      checked.
+    - `1.15.25 Concentrated Stock.jpg` — CL_ASR29 (PID926/PDEV946),
+      **confirmed MW 44,599.87 Da**
     - `6.12.26 PDEV1718 Protein Purity.tif`, `260612_ProteinPurity.tif`,
       `260407_protein_purity.tif`, `4.16.26 Protein Purity.tif` — **no
       legible protein label found at all**; identity unknown, not just MW.
