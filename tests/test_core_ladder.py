@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from gel_extractor.core.bands import correct_baseline, detect_bands
 from gel_extractor.core.ladder import (
     LadderCalibrationError,
     UnknownLadderError,
@@ -110,6 +111,35 @@ def test_calibrate_ladder_raises_on_poor_fit():
     profile = _synthetic_ladder_profile([190.8, 812.7, 855.1, 889.4], height=950)
     with pytest.raises(LadderCalibrationError):
         calibrate_ladder(profile, [250, 180, 130, 95, 72, 55, 43, 34, 26, 17, 10])
+
+
+def test_calibrate_ladder_uses_more_lenient_noise_floor_than_sample_lanes():
+    # A faint-but-real ladder lane (prominence ~9x the estimated noise level)
+    # -- found 2026-07-13 testing more real images: 3 of 4 images with a
+    # visually-confirmed but low-contrast ladder lane failed to calibrate at
+    # detect_bands' general default noise floor (10x), but succeeded at a
+    # more lenient one (5x). Safe specifically for the ladder lane because
+    # calibration has its own downstream guardrails (band count, R²) to
+    # reject a bad fit -- confirmed here that the *same* profile would find
+    # 0 bands under the stricter, general-purpose default used for sample
+    # lanes (which have no such guardrail, so stay strict).
+    known_mws = [100, 50, 25, 10]
+    slope, intercept = -0.01, 2.5
+    positions = [(np.log10(mw) - intercept) / slope for mw in known_mws]
+    height = int(max(positions)) + 50
+    x = np.arange(height)
+    rng = np.random.default_rng(3)
+    profile = np.abs(rng.normal(0, 0.08, size=height))
+    for pos in positions:
+        profile += 0.5 * np.exp(-((x - pos) ** 2) / (2 * 3.0**2))
+
+    calibration = calibrate_ladder(profile, known_mws)
+    assert len(calibration.positions) == 4
+    for pos, mw in zip(positions, known_mws):
+        assert abs(calibration.mw_at(pos) - mw) / mw < 0.1
+
+    # Same profile, general-purpose (sample-lane) default: no bands survive.
+    assert detect_bands(correct_baseline(profile)) == []
 
 
 def test_get_ladder_bands_raises_for_unknown_name():

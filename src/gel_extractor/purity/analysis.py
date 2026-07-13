@@ -33,7 +33,7 @@ class LaneResult:
     """Purity result for a single sample lane."""
 
     lane: int
-    purity_percent: float | None
+    purity_percent: int | None
     confidence: str  # "mw-matched" | "heuristic" | "not-found"
     target_mw_expected: float
     matched_band_mw: float | None
@@ -184,10 +184,16 @@ def _largest_band(bands: list[Band]) -> list[Band]:
     return [max(bands, key=lambda b: b.area)]
 
 
-def _safe_percent(numerator: float, denominator: float) -> float:
+def _safe_percent(numerator: float, denominator: float) -> int:
+    """Round to the nearest whole percent.
+
+    Not 1 decimal place (the original default): given known calibration/
+    detection imprecision (see AGENTS.md Known Limitations), a fractional
+    percent implies more precision than the pipeline actually has.
+    """
     if denominator <= 0:
-        return 0.0
-    return round(100.0 * numerator / denominator, 1)
+        return 0
+    return round(100.0 * numerator / denominator)
 
 
 def _resolve_known_mws(ladder: str | None, ladder_bands: list[float] | None) -> list[float] | None:

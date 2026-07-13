@@ -40,7 +40,7 @@ def format_table(results: list[LaneResult], ladder_lane_index: int) -> str:
     )
     rows = [title_row]
     for r in results:
-        purity = f"{r.purity_percent:.1f}" if r.purity_percent is not None else "n/a"
+        purity = f"{r.purity_percent:d}" if r.purity_percent is not None else "n/a"
         matched_mw = f"{r.matched_band_mw:.1f}" if r.matched_band_mw is not None else "n/a"
         rows.append(
             f"{r.lane:>{col['lane']}}  {purity:>{col['purity']}}  "

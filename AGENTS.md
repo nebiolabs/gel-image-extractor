@@ -310,11 +310,15 @@ same day design finished, so no date-of-completion note beyond "2026-07-13").
 - **Package layout:** `src/gel_extractor/{core,purity}/` (src-layout),
   entry point `gelx` (`gelx purity analyze <image> --target-mw KDA [...]`).
   Run via `uv run gelx ...`; tests via `uv run pytest`.
-- **Test suite:** 35 tests passing — unit tests per `core` module (synthetic,
+- **Test suite:** 36 tests passing — unit tests per `core` module (synthetic,
   deterministic data), an end-to-end pipeline test via a synthetic gel image
   file, CLI tests (table/CSV/JSON/error paths), and integration tests
   against a real example gel image, including the dilution-series
   self-consistency check.
+- **Reporting precision fixed:** `purity_percent` now rounds to the nearest
+  whole percent (was 1 decimal place — see the former Known Limitations
+  entry, now resolved). `matched_band_mw` is unaffected (a different,
+  separately-imprecise measurement, not part of this fix).
 - **`KNOWN_LADDERS["P7719"]` is now seeded and verified** (`core/ladder.py`)
   — `[250, 180, 130, 95, 72, 55, 43, 34, 26, 17, 10]` kDa. Verified against
   NEB's own labeled product gel image for P7719 (user-provided), which
@@ -398,6 +402,32 @@ they're non-obvious and expensive to rediscover:
   off — just outside the old 17.5% bound. After both fixes: **8 of 10 real
   sample lanes now match consistently on the same MW (34.6-34.9 kDa)**,
   not a scattered mix of coincidental matches.
+- **Broader real-image testing (2026-07-13) found and fixed a real
+  ladder-calibration gap, and clarified how much accuracy is actually
+  validated.** Swept lane detection + ladder calibration across all 11
+  `decodeon_gel_images/Protein Purity/` images (not just the one tuned
+  against so far). Initially, only 6/11 calibrated; investigating the 5
+  failures (by directly viewing each image, not just trusting the error)
+  found that 3 of them had a **visibly real but low-contrast ladder lane**
+  being wrongly filtered out by the noise-floor gate above — that gate's
+  10× threshold, tuned against one image's genuinely-blank lane, was too
+  strict for a different image's genuinely-faint-but-real one. **Fixed** by
+  using a more lenient noise floor (5×) specifically for ladder-lane
+  detection, since calibration has its own downstream guardrails (band
+  count, R²) to catch a bad result; sample-lane detection stays at the
+  stricter default, since it has no such guardrail and a false positive
+  there directly corrupts the purity ratio. Result: **10 of 11 images now
+  calibrate successfully** (R² 0.89-0.98). Important scope caveat, prompted
+  by direct user question: this only validates the calibration *machinery*
+  across those 10 images, not full purity accuracy — see the per-file
+  protein-identity notes in Data Inventory above. Only 1 image (HpyCH4IV)
+  has both a clean file and a confirmed target MW to validate against
+  end-to-end; a second guess (assuming `251017_..._FusionProtein.tif` was
+  the submitter's FCE-T7 RNAP fusion) was tested and found wrong, so it's been
+  retracted rather than reported as a finding. Getting confirmed MWs for the
+  other identified proteins (Esp3I, IdeS Protease, TelA, R-218/TET3 fusion,
+  CL_ASR29) is now tracked as a question for end users
+  (`QUESTIONS_FOR_USERS.md`).
 - **Confirmed (not just suspected) limitation: a dilution-detectability
   threshold skews purity at high dilution.** Even after the fixes above, the
   matched-purity trend still increases with dilution (29% → 48% across the
@@ -420,14 +450,6 @@ Real, open items surfaced during implementation that haven't been resolved
 yet. Don't silently fix or dismiss these without discussing first — they're
 recorded here specifically so they aren't lost or re-litigated from scratch.
 
-- **Reporting precision is currently overstated.** `purity_percent` is
-  rounded to 1 decimal place unconditionally. Given everything above (a
-  calibration curve with real, imperfect fit quality; band detection that
-  can swing from too-insensitive to wildly-too-sensitive depending on lane
-  signal strength; a possible systematic bias not yet explained), 1 decimal
-  place implies more precision than the pipeline currently has. Discussed
-  2026-07-13: **plan is to round to the nearest integer instead**, but this
-  hasn't been implemented yet — treat it as agreed direction, not done.
 - **Lane capture is a fixed vertical rectangle, with no smiling/curvature or
   bleed-over handling.** `Lane.crop` uses one `(x_start, x_end)` column range
   applied uniformly across the entire image height. This doesn't account for
@@ -510,6 +532,39 @@ rather than guessing.
   scan quality (see `QUESTIONS_FOR_USERS.md`). One
   (`251017_..._FusionProtein.tif`) shows a doublet band with explicit
   dilution-fold labels burned in — a useful edge case for band-matching logic.
+  **This is the dataset all real-image pipeline testing/tuning has actually
+  used** (lane detection, ladder calibration, the noise-threshold fix) —
+  `daria_data`'s images were never fed into the pipeline itself (see below),
+  only its email text for known MWs.
+  - **Per-file protein identity, confirmed by directly viewing each image
+    (2026-07-13)** — only `8.6.25 Protein Purity.tif` (HpyCH4IV) has both a
+    clean testable file *and* an independently confirmed MW (29,267 Da, from
+    the submitter's email); the rest have a visible identity label but **no
+    confirmed MW yet** — tracked as a new question for end users in
+    `QUESTIONS_FOR_USERS.md`:
+    - `2.4.25 PDEV981 Protein Purity.jpg` — Esp3I (PID940/PDEV981)
+    - `9.20.24 PDEV829 Conc Stock.jpg` — IdeS Protease (PDEV829)
+    - `7.17.24 PDEV772 Conc Stock.jpg` — TelA (NEB3606, PDEV772)
+    - `10.31.25 PDEV1437.tif` / `251017_..._FusionProtein.tif` — same
+      construct, two lots/dates: R-218, a TET3 fusion (PDEV1437 / PID1384).
+      **Not** the FCE-T7 RNAP fusion from the submitter's email — an earlier guess
+      assuming that was wrong (confirmed by testing: no band anywhere near
+      200,717 Da), corrected once actually checked.
+    - `1.15.25 Concentrated Stock.jpg` — CL_ASR29 (PID926/PDEV946)
+    - `6.12.26 PDEV1718 Protein Purity.tif`, `260612_ProteinPurity.tif`,
+      `260407_protein_purity.tif`, `4.16.26 Protein Purity.tif` — **no
+      legible protein label found at all**; identity unknown, not just MW.
+  - **Important scope note on `daria_data`'s 4 confirmed MWs** (HpyCH4IV
+    29,267 Da; FCE-T7 RNAP fusion 200,717 Da; EcoRI-HF 31,027 Da; BtgZI
+    94,198 Da, all from the email thread): only HpyCH4IV has a matching
+    clean `decodeon_gel_images` file we can actually run through the tool.
+    The other 3 known MWs have no corresponding clean, pipeline-testable
+    image at all — they only exist as `daria_data` screenshots/QC-report
+    images, which aren't valid pipeline input (see Sub-project 1 above).
+    **Net result: full end-to-end purity-accuracy validation currently has
+    exactly one confirmed real test case (HpyCH4IV)** — every other
+    successful calibration in this batch only confirms the calibration
+    *machinery* works, not that the reported purity % is correct.
 - `data/decodeon_gel_images/Titers/` — added 2026-07-13. 8 images that are a
   **structurally distinct third category**, not a clean fit for either
   existing workflow: inverted-contrast agarose gels showing a 2-fold enzyme
@@ -564,6 +619,14 @@ Add to it as new questions surface; don't resolve them by guessing.
 working, tested implementation (see Implementation Status); the activity side
 is still a conceptual sketch, since that workflow hasn't been built. Render
 with: `mmdc -i diagrams/program-flow.mmd -o diagrams/program-flow.png -b white -s 2`.
+
+**Planned second diagram (requested 2026-07-13, not yet built):** the user
+wants a *separate* mermaid diagram capturing actual program flow — real
+class/method calls through the implemented pipeline — alongside (not
+replacing) the conceptual diagram above. No filename, scope, or format
+decided yet; don't build until asked, and discuss scope first rather than
+assuming what "class/method calls" should mean here (e.g. a UML-style class
+diagram vs. a sequence diagram for one CLI invocation).
 
 ### "update docs" convention
 

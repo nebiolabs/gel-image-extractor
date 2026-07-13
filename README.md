@@ -6,7 +6,7 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (35 tests passing). **Activity
+**Purity workflow: implemented and tested** (36 tests passing). **Activity
 workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
@@ -89,16 +89,25 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 35 passing tests covering all of this.
+  currently has 36 passing tests covering all of this.
+- **Reporting precision:** `purity_percent` rounds to the nearest whole
+  percent (not 1 decimal) — deliberately, given the pipeline's known
+  real-world imprecision.
 - Running this against real images surfaced some non-obvious findings (a
   data file that's actually a screenshot with UI chrome, real gel photos not
   being on a white background, a band-detection noise-robustness gap on
   faint lanes — now fixed, a ladder-calibration approach that had to stop
-  assuming a fixed direction for missing bands — now fixed, and a confirmed,
-  still-unmitigated limitation where high dilution inflates apparent purity
-  by making contaminant bands undetectable before the target band) — see
-  `AGENTS.md`'s "Implementation Status" and "Known Limitations" sections for
-  the full detail.
+  assuming a fixed direction for missing bands — now fixed, a ladder-lane
+  noise threshold that was too strict for several genuinely faint-but-real
+  scans — now fixed, bringing successful calibration from 6/11 to 10/11 real
+  example images, and a confirmed, still-unmitigated limitation where high
+  dilution inflates apparent purity by making contaminant bands undetectable
+  before the target band) — see `AGENTS.md`'s "Implementation Status" and
+  "Known Limitations" sections for the full detail.
+- **Only one real image has both a clean testable file and a confirmed
+  target MW** (HpyCH4IV) — every other successful calibration only confirms
+  the calibration *machinery* works, not that the reported purity % is
+  correct. Getting more confirmed MWs is tracked in `QUESTIONS_FOR_USERS.md`.
 - **Purity calculation is confirmed to stay a direct single-lane
   densitometric ratio** (target band area / total lane area, calibrated
   against one ladder), not a comparison/bracketing against reference lanes —

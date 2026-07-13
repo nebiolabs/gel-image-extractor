@@ -74,6 +74,23 @@ outside domain knowledge or a business/scope call.
   than reporting/aggregating across the whole dilution series, (c) something
   else, or (d) is there a recommended dilution range end users already use
   in practice to avoid this? *(Raised 2026-07-13.)*
+- [ ] **Need confirmed molecular weights for proteins identified (by visible
+  in-image label) in `decodeon_gel_images/Protein Purity/`, to expand
+  end-to-end purity-accuracy validation beyond the single confirmed case we
+  have (HpyCH4IV).** Copy/paste list:
+  ```
+  Esp3I
+  IdeS Protease
+  TelA
+  R-218 (TET3 fusion)
+  CL_ASR29
+  ```
+  Separately, 4 images have **no legible protein label at all** — identity
+  unknown, not just MW: `6.12.26 PDEV1718 Protein Purity.tif`,
+  `260612_ProteinPurity.tif`, `260407_protein_purity.tif`,
+  `4.16.26 Protein Purity.tif`. *(Raised 2026-07-13 — see `AGENTS.md` Data
+  Inventory for the full per-file breakdown, including which file shows
+  which label.)*
 
 ## Activity workflow
 
@@ -99,6 +116,7 @@ outside domain knowledge or a business/scope call.
 
 *Last updated: 2026-07-13 (P7719 band-size question resolved; dilution-
 detectability-limit question added after user confirmed it as a real
-concern. See `AGENTS.md` "Known Limitations" for open engineering items that
-don't need end-user input). See `AGENTS.md` for full design context behind
-these questions.*
+concern; protein-MW question added after per-file identity investigation.
+See `AGENTS.md` "Known Limitations" for open engineering items that don't
+need end-user input). See `AGENTS.md` for full design context behind these
+questions.*

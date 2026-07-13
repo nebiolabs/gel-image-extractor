@@ -68,6 +68,20 @@ MIN_MATCHED_BANDS = 3
 # 11 known bands assumed undetected) fit at ~0.89. 0.85 admits that while
 # still rejecting clearly-wrong fits (the poor-fit test case measures ~0.64).
 MIN_R_SQUARED = 0.85
+# Deliberately more lenient than detect_bands' own default (10x). Found
+# 2026-07-13 testing a broader set of real images: 3 of 4 images with a
+# faint-but-real ladder lane (visually confirmed -- distinct rungs, just
+# low-contrast) failed to calibrate at the default noise floor, but
+# succeeded (R² 0.94-0.96) at this lower one. Safe specifically for the
+# ladder lane because calibration has its own downstream guardrails
+# (min_matched_bands, min_r_squared) to reject a bad fit -- a false-positive
+# noise band here either gets excluded by the best-fit window search or
+# drags R² below the floor. Sample-lane detection has no such safety net (a
+# false-positive band there directly corrupts the purity ratio), so it
+# stays at detect_bands' stricter default -- confirmed via the original
+# noise-blank-lane regression case, which still shows real bands at this
+# lower SNR (would reintroduce the 98-band problem if used there).
+LADDER_MIN_SNR = 5.0
 
 
 def calibrate_ladder(
@@ -75,6 +89,7 @@ def calibrate_ladder(
     known_mws: list[float],
     min_matched_bands: int = MIN_MATCHED_BANDS,
     min_r_squared: float = MIN_R_SQUARED,
+    min_snr: float = LADDER_MIN_SNR,
 ) -> LadderCalibration:
     """Detect bands in a ladder lane's profile and fit a calibration curve.
 
@@ -96,7 +111,7 @@ def calibrate_ladder(
     correspondence can be trusted, so it's safer to refuse than to guess.
     """
     corrected = correct_baseline(profile)
-    bands = detect_bands(corrected)
+    bands = detect_bands(corrected, min_snr=min_snr)
 
     if len(bands) < min_matched_bands:
         raise LadderCalibrationError(
