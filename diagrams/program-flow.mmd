@@ -1,23 +1,42 @@
 %% program-flow.mmd
-%% NOTE: No implementation exists yet. This is a conceptual data-flow diagram
-%% based on the shared pipeline described in AGENTS.md, not an actual class/
-%% method diagram. It will be replaced with a real class/sequence diagram once
-%% code exists and architecture has been discussed.
+%% NOTE: No implementation exists yet. This reflects design decisions made as
+%% of 2026-07-13 (see AGENTS.md "Design Decisions" / "Open Questions"), not
+%% real code — it should be replaced with an actual class/sequence diagram
+%% once implementation exists.
 
 flowchart TD
-    Note["⚠ No code yet — conceptual pipeline only,<br/>see AGENTS.md Project Overview"]
+    Note["⚠ No code yet — reflects decided design,<br/>see AGENTS.md Design Decisions"]
 
     Input["Gel image input<br/>(TIFF / PNG / JPG)"]
-    Detect["Lane / well + ladder detection"]
-    Bands["Band detection / densitometry"]
-    Calibrate["Ladder-relative calibration"]
 
-    OutPurity["Purity % output<br/>(sub-project 1: protein purity)"]
-    OutActivity["Activity state output<br/>Active / Partial / Dead<br/>(sub-project 2: activity gel extraction)"]
-    Heatmap["Well position × time heatmap"]
+    subgraph Core["core (shared)"]
+        Seg["Lane / grid segmentation"]
+        Ladder["Ladder detection & calibration"]
+        BandDet["Band / peak detection<br/>(intensity profile + baseline correction)"]
+    end
 
-    Input --> Detect --> Bands --> Calibrate
-    Calibrate --> OutPurity
-    Calibrate --> OutActivity --> Heatmap
+    PurityLabel["purity workflow<br/>MVP — build first"]
+    subgraph PurityWF[" "]
+        AutoLane["Auto-detect lanes<br/>(column intensity projection)"]
+        TargetID["Identify target band<br/>⚠ open question: heuristic vs MW-based"]
+        PurityCalc["purity % =<br/>target band area / total lane area"]
+        PurityOut["CLI output: per-lane table (default)<br/>or single lane via --lane N"]
+    end
+
+    ActivityLabel["activity workflow<br/>Deferred — rule-based, not ML"]
+    subgraph ActivityWF[" "]
+        GridDet["96-well grid detection"]
+        ExpectedFrag["Expected fragment size(s)<br/>via substrate + ladder<br/>(NEBcutter tie-in)"]
+        Classify["Classify well:<br/>Active / Partial / Dead"]
+        Heatmap["Well position × time heatmap"]
+    end
 
     Note -.-> Input
+    Input --> Seg --> Ladder --> BandDet
+
+    BandDet --> AutoLane
+    BandDet --> GridDet
+    PurityLabel -.-> AutoLane
+    ActivityLabel -.-> GridDet
+    AutoLane --> TargetID --> PurityCalc --> PurityOut
+    GridDet --> ExpectedFrag --> Classify --> Heatmap

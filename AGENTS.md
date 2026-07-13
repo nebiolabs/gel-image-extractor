@@ -72,8 +72,73 @@ gel/lane/well segmentation, band detection, ladder-relative calibration, and
 robustness to inconsistent imaging conditions. They differ in throughput (one
 lane vs. 96 wells at a time) and in what the final output looks like
 (continuous % purity vs. a 3-state activity classification feeding a heatmap).
-Whether/how much shared infrastructure makes sense between the two is a design
-question — not yet decided.
+Decided (2026-07-13): **shared architecture, separate workflows** — see Design
+Decisions below.
+
+## Design Decisions
+
+Decided as of 2026-07-13, through direct discussion — not to be revisited
+without cause:
+
+- **Shared core, separate workflows.** One project/repo with a shared `core`
+  (image I/O, ladder detection/calibration, lane/grid segmentation, band/peak
+  detection) and two thin, independent workflow modules on top — `purity` and
+  `activity` — rather than two separate repos or one forced single pipeline.
+  Rough intended layout:
+  ```
+  gel_extractor/
+    core/       # shared image-processing primitives
+    purity/     # sub-project 1 workflow
+    activity/   # sub-project 2 workflow
+  ```
+- **Build order: purity first.** It's a single small gel (not a 96-well grid),
+  so it validates `core`'s primitives (ladder detection, band/peak finding) on
+  the simpler case before tackling grid detection. Activity gel work is
+  deferred until purity is working.
+- **Activity gel classification will be rule-based/classical, not ML.** The
+  existing labeled dataset (`data/gia_data`, ~2,304 well-observations) is
+  effectively a single independent experiment (one enzyme, one substrate, one
+  pool, one ladder, one imaging setup) resampled over time — not independently
+  varying data. A model trained on it would likely learn "what this specific
+  SfiI/pXba decay looks like" rather than generalizing across substrates/cut
+  patterns/imaging settings, which is exactly the challenge the original
+  proposal calls out. Rough estimate: robust generalization would need
+  independent variation across dozens of enzyme/substrate combinations, several
+  independent pools/preps per condition, and deliberately varied imaging
+  settings — likely tens of thousands of independently-varying labeled wells,
+  a couple of orders of magnitude beyond what exists today. Revisit if/when
+  NEB accumulates that kind of labeled data as a byproduct of normal QC work.
+- **Interface: CLI for now**, structured so a UI can be layered on top later
+  without a rework (i.e. keep core logic decoupled from any CLI-specific
+  concerns).
+- **Purity workflow: auto-detect lanes, no manual coordinates.** Lane
+  auto-detection for a single small gel is a well-established classical CV
+  technique (sum pixel columns → find the valleys between lanes in the
+  projection profile → each peak region is a lane), unlike full 96-well grid
+  detection, which is much harder. This sidesteps needing CLI-unfriendly manual
+  coordinate/bounding-box input. Default CLI behavior: given just a gel image,
+  auto-detect all lanes and output a table of lane index → purity %. An
+  optional `--lane N` flag scopes the analysis to one auto-detected lane by
+  index (not raw pixel coordinates).
+- **Core purity computation:** for a given lane, extract the intensity
+  profile, subtract baseline, and compute `target_band_area / total_lane_area`
+  as purity %. This works off the sample lane alone — it does not depend on a
+  known-purity standards ladder being present, since several example gels
+  don't have one (`01_HpyCH4IV...png`, `02_FCE_T7...jpg`).
+
+## Open Questions
+
+- **How to identify "the target band" within a lane** when multiple bands are
+  present: (a) heuristic — assume it's the darkest/most intense band, or
+  (b) MW-based — use the protein's known expected molecular weight (available
+  for the 4 example proteins via the submitter's email) plus ladder calibration to
+  find the band nearest that expected size. (b) is more principled but depends
+  on reliable ladder identification/calibration, which the submitter flagged as
+  inconsistent (QC report gels don't record which ladder was used). Not yet
+  decided.
+- Whether/how the known-purity standard ladder lanes (50/75/88/94/97/98/99%),
+  when present, should be used — e.g. as a validation/sanity-check against the
+  direct densitometry result, since the core computation doesn't require them.
 
 ## Data Inventory
 
@@ -97,9 +162,11 @@ question — not yet decided.
 - **No unilateral design assumptions.** This is a from-scratch project; decide
   architecture, libraries, algorithms, and scope iteratively and explicitly
   with the user rather than inferring intent. When in doubt, ask.
-- **Current phase: scoping and infrastructure only.** As of this writing, no
-  implementation approach has been chosen. Don't start building the
-  purity/activity-detection pipeline itself until that's been discussed.
+- **Current phase: design decided, no code written yet.** Architecture and the
+  purity-workflow approach have been discussed and decided (see Design
+  Decisions above), but implementation hasn't started. Don't start writing the
+  actual pipeline code until that's explicitly requested — decisions being
+  made doesn't imply a green light to implement.
 
 ## Architecture Diagram
 
@@ -114,10 +181,11 @@ discussed. Render with: `mmdc -i diagrams/program-flow.mmd -o diagrams/program-f
 
 When the user says **"update docs"**, **"update documentation"**, or anything
 clearly equivalent, treat it as shorthand for: refresh persistent memory,
-`AGENTS.md`, and the architecture diagram (both `diagrams/program-flow.mmd` and
-the re-rendered `diagrams/program-flow.png`) to reflect what's actually been
-decided/built since they were last updated. Re-render the PNG any time the
-`.mmd` changes — don't let them drift out of sync.
+`AGENTS.md`, `README.md`, and the architecture diagram (both
+`diagrams/program-flow.mmd` and the re-rendered `diagrams/program-flow.png`)
+to reflect what's actually been decided/built since they were last updated.
+Re-render the PNG any time the `.mmd` changes — don't let them drift out of
+sync.
 
 ## Repo Infrastructure Notes
 
