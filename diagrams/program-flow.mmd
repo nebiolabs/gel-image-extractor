@@ -1,0 +1,23 @@
+%% program-flow.mmd
+%% NOTE: No implementation exists yet. This is a conceptual data-flow diagram
+%% based on the shared pipeline described in AGENTS.md, not an actual class/
+%% method diagram. It will be replaced with a real class/sequence diagram once
+%% code exists and architecture has been discussed.
+
+flowchart TD
+    Note["⚠ No code yet — conceptual pipeline only,<br/>see AGENTS.md Project Overview"]
+
+    Input["Gel image input<br/>(TIFF / PNG / JPG)"]
+    Detect["Lane / well + ladder detection"]
+    Bands["Band detection / densitometry"]
+    Calibrate["Ladder-relative calibration"]
+
+    OutPurity["Purity % output<br/>(sub-project 1: protein purity)"]
+    OutActivity["Activity state output<br/>Active / Partial / Dead<br/>(sub-project 2: activity gel extraction)"]
+    Heatmap["Well position × time heatmap"]
+
+    Input --> Detect --> Bands --> Calibrate
+    Calibrate --> OutPurity
+    Calibrate --> OutActivity --> Heatmap
+
+    Note -.-> Input
