@@ -23,7 +23,10 @@ flowchart TD
         Heuristic["--allow-heuristic:<br/>fallback to largest/darkest band<br/>(flagged low-confidence)"]
         ErrorOut["Error: cannot calibrate ladder —<br/>requires --ladder-bands or<br/>--allow-heuristic"]
         PurityCalc["purity % =<br/>target band area / total lane area"]
-        PurityOut["CLI output: per-lane table (default)<br/>or single lane via --lane N"]
+        LaneResult["LaneResult data model<br/>(lane, purity_percent, confidence,<br/>target_mw_expected, matched_band_mw)"]
+        TableOut["Table (default, stdout)"]
+        CsvOut["--csv [PATH]"]
+        JsonOut["--json [PATH]"]
     end
 
     ActivityLabel["activity workflow<br/>Deferred — rule-based, not ML"]
@@ -46,6 +49,9 @@ flowchart TD
     LadderCal -- yes --> MWMatch --> PurityCalc
     LadderCal -- "no, heuristic allowed" --> Heuristic --> PurityCalc
     LadderCal -- "no, no flag given" --> ErrorOut
-    PurityCalc --> PurityOut
+    PurityCalc --> LaneResult
+    LaneResult --> TableOut
+    LaneResult --> CsvOut
+    LaneResult --> JsonOut
     GridDet --> Baseline --> Classify --> Heatmap
     Baseline -.-> ExpectedFrag -.-> Classify

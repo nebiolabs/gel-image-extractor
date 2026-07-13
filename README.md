@@ -44,11 +44,30 @@ See `AGENTS.md` for the full rationale.
 
 ## Development
 
-- No language/dependency tooling has been chosen yet beyond Python.
-- Interface: CLI first, structured so a UI can be layered on later. Every
-  flag (`--lane`, `--ladder-bands`, `--allow-heuristic`, etc.) must be clearly
-  documented in the CLI's own `--help` output, not just in external docs —
-  end users of this tool aren't expected to be CLI-comfortable.
+- **Stack:** Python 3.11+; `numpy` + `scipy` + `scikit-image` for image
+  processing; `argparse` for the CLI; `pyproject.toml` + `uv` for packaging/
+  dependencies; `pytest` for testing.
+- **Interface:** one CLI entry point with subcommands (e.g.
+  `<tool> purity analyze gel.tif`), not separate binaries per workflow.
+  Structured so a UI can be layered on later. Every flag (`--lane`,
+  `--ladder-bands`, `--allow-heuristic`, etc.) must be clearly documented in
+  the CLI's own `--help` output, not just in external docs — end users of
+  this tool aren't expected to be CLI-comfortable.
+- **Output:** human-readable table to stdout by default; `--csv [PATH]` and
+  `--json [PATH]` are additive, optional, and can be combined. See
+  `AGENTS.md`'s "Design Decisions" for the exact column schema.
+- **Architecture is deliberately modular/swappable**: a pipeline of discrete
+  stages, pluggable algorithms behind common interfaces (baseline correction,
+  band detection, ladder-lane identification), and a structured result object
+  decoupled from output formatting — several early decisions (baseline
+  method, MW tolerance, the leftmost-lane heuristic) are expected to change
+  once real output is in hand, so swapping any one of them should be a
+  localized change, not a rewrite.
+- **Testing is required, not optional polish** — every pipeline stage needs
+  unit tests, plus integration tests against the real example gel images in
+  `data/`, plus the dilution-series self-consistency check (same sample,
+  same purity % across dilutions — our main correctness signal, since no
+  external ground truth exists) encoded as an actual automated test.
 - No git actions (commit/push) happen without explicit user consent — see
   `AGENTS.md`'s "Working Agreements".
 - Open questions that need a domain expert's input (not just an engineering

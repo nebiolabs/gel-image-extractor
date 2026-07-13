@@ -179,6 +179,91 @@ without cause:
   fragment sizes) becomes an optional future validation layer, not a
   requirement — revisit if baseline-relative comparison turns out to miss
   real failure modes (tracked in `QUESTIONS_FOR_USERS.md`).
+- **Tech stack (decided 2026-07-13):** Python 3.11+; `numpy` + `scipy` +
+  `scikit-image` for image processing (lighter/more idiomatic than OpenCV for
+  this scale; OpenCV is worth reconsidering specifically for the activity
+  workflow's 96-well grid/circle detection later, since its Hough-circle/
+  contour tooling is more mature for that particular problem — not a purity
+  concern); `argparse` for the CLI, not `typer` — typer's auto-generated
+  `--help` is nicer, but doesn't outweigh Jacob's existing familiarity with
+  argparse, so we're using argparse with a deliberate commitment to writing
+  complete `help=` text for every flag to still meet the CLI-usability
+  requirement above; `pyproject.toml` + `uv` for packaging/dependency
+  management (chosen over conda since our whole stack is available as PyPI
+  wheels and doesn't need conda's non-Python binary management); `pytest` for
+  testing.
+- **One CLI entry point with subcommands (confirmed 2026-07-13)**, not
+  separate binaries per workflow — e.g. `<tool> purity analyze gel.tif`,
+  reflecting the actual shared-core/separate-workflows architecture. Exact
+  command name not yet finalized (used as a placeholder in discussion so
+  far) — pick something reasonable during implementation, low-stakes enough
+  not to need a full design discussion.
+- **Output formats (decided 2026-07-13): table (default) + optional CSV/JSON,
+  additive not mutually exclusive.** Human-readable table always prints to
+  stdout by default. `--csv [PATH]`: if a path is given, writes a CSV file
+  there (table still also prints to stdout); if no path is given, prints CSV
+  to stdout *instead of* the table, so it stays pipeable. `--json [PATH]`
+  works the same way. Both flags can be combined (e.g. write both a CSV and a
+  JSON file in one run); using both bare (no path) at once is the one
+  disallowed combination, since they'd both want stdout. Shared column/field
+  set across all three formats: `lane` (index among sample lanes — the
+  ladder lane is excluded from result rows, but which lane was used as the
+  ladder is noted once, e.g. a header line above the table or a top-level
+  JSON field), `purity_percent`, `confidence` (`mw-matched` / `heuristic`),
+  `target_mw_expected`, `matched_band_mw`.
+- **Target-band edge cases resolved (2026-07-13):**
+  - **Doublets/multiple bands within MW tolerance:** sum all bands that fall
+    within the tolerance window as the target signal, rather than picking
+    only the single nearest band — more scientifically defensible (often
+    legitimately the same protein in two forms), and directly motivated by
+    the observed doublet in `251017_..._FusionProtein.tif`.
+  - **Which detected lane is the ladder:** default to the leftmost detected
+    lane (true in every example seen so far), with an override flag for the
+    rare exception. This is a real assumption from a small sample size, not
+    a robust detection — worth revisiting if it misfires on real data.
+  - **Lane vertical bounds (the "total lane area" denominator):** crop starts
+    just below the loading well (excluding well/aggregate smear) through the
+    dye front. Proposed on paper; needs visual validation against real gels
+    once code exists, not just a decision on paper.
+- **Validation strategy (decided 2026-07-13): no external numeric ground
+  truth exists** for any example gel (the closest is "EcoRI-HF is >95% pure,"
+  a threshold, not an exact value) — confirmed there's no better source
+  available right now. Primary correctness signal instead: **a dilution
+  series of the same sample should yield roughly the same purity % across
+  all dilution lanes**, since diluting shouldn't change purity, only total
+  signal. This is the bar implementation should be validated against absent
+  real ground truth.
+- **Modular, swappable architecture (decided 2026-07-13) — explicit
+  requirement, not just good practice, because several decisions above
+  (baseline correction method, MW tolerance value, the leftmost-lane
+  heuristic, doublet-summing logic) are expected to change once we're
+  looking at real output instead of paper decisions.** Concretely:
+  - **Pipeline of discrete stages**, not one monolithic function: image →
+    intensity profile → baseline-corrected profile → detected bands →
+    identified target band(s) → purity % → formatted output. Each stage is
+    its own function with a clear input/output contract.
+  - **Pluggable algorithms behind a common interface (strategy pattern)** for
+    pieces expected to be revised: baseline correction
+    (`correct_baseline(profile) -> profile`), band/peak detection, and
+    ladder-lane identification — swapping the underlying method should not
+    require changing calling code.
+  - **A structured internal result object** (e.g. a `LaneResult` dataclass)
+    rather than raw dicts/tuples threaded through the code. Table/CSV/JSON
+    output are three independent formatter functions that all read from the
+    same result object — adding a fourth format later means writing one new
+    formatter, not touching core logic.
+  - **Centralized, named configuration for tunable values** (MW tolerance %,
+    etc.) instead of magic numbers scattered through the code, so tuning them
+    later is a one-line change.
+- **Robust testing is a project requirement, not optional polish (decided
+  2026-07-13).** The modular pipeline-of-stages architecture above exists
+  partly *to make this practical* — each stage (baseline correction, band
+  detection, target identification, output formatting) should have its own
+  unit tests, plus integration tests running the full pipeline against the
+  real example gel images in `data/`. The dilution-series self-consistency
+  check above (same sample, same purity % across dilutions) should be
+  encoded as an actual automated test, not just an informal sanity check —
+  it's our main correctness signal given the lack of external ground truth.
 
 ## Open Questions
 
@@ -275,6 +360,11 @@ Add to it as new questions surface; don't resolve them by guessing.
   code. Every Design Decision entry should carry its rationale (the "why"), not
   just the decision itself — this applies to future edits too, not only what's
   already written.
+- **Robust testing is required, not optional polish.** See the "Modular,
+  swappable architecture" and "Robust testing" entries in Design Decisions —
+  every pipeline stage needs unit tests, plus integration tests against the
+  real example gel images, plus the dilution-series self-consistency check
+  encoded as an actual automated test.
 
 ## Architecture Diagram
 
@@ -302,4 +392,6 @@ don't let them drift out of sync.
   RabbitMQ, Streamlit, etc.) down to what's actually relevant: Python
   build/cache artifacts, virtual envs, `.idea/` (JetBrains), standard macOS
   junk files, and the `data/` directory.
-- No language/framework/dependency tooling has been chosen yet.
+- Language/framework/dependency tooling is now decided — see the "Tech stack"
+  entry in Design Decisions (Python 3.11+, numpy/scipy/scikit-image,
+  argparse, pyproject.toml + uv, pytest).
