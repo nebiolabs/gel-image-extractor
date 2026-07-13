@@ -30,12 +30,29 @@ outside domain knowledge or a business/scope call.
 
 ## Purity workflow
 
-- [ ] **Is P7719 the de facto standard ladder for most protein purity gels at
-  NEB?** If so, we could default `--ladder` to it and only require the flag
-  when a different ladder was actually used, reducing the common-case CLI
-  input down to just `--target-mw`. *(Raised 2026-07-13 — several of the
-  purity examples we have use P7719, but we don't know if that's
-  representative or coincidental.)*
+- [ ] **Which ladder(s) do these assays actually use — is it always the same
+  one, or does it vary by team/assay/scientist?** Broadened 2026-07-13 from a
+  narrower P7719-specific question. This matters across workflows, not just
+  purity:
+  - *Purity:* is P7719 the de facto standard for most protein purity gels at
+    NEB? If so, we could default `--ladder` to it and only require the flag
+    when a different ladder was actually used, reducing the common-case CLI
+    input down to just `--target-mw`. Several purity examples we have use
+    P7719, but we don't know if that's representative or coincidental.
+  - *Activity/titer:* the SfiI dataset documents "1kb+" as the DNA ladder
+    used; TfiI and the Titers dataset don't have a recorded ladder identity
+    that we've confirmed — is it the same ladder across all restriction/
+    activity work, or does it vary by assay?
+  - Also relevant: we couldn't find NEB's official published list of the 11
+    individual band sizes for P7719 (10-250 kDa) via public product pages/
+    spec sheets/protocol page while researching this — only that it has 11
+    bands with orange/green reference bands at 72 kDa and 26 kDa. If P7719
+    turns out to be the standard, we'll need the exact per-band kDa values
+    from an internal source (Certificate of Analysis for a specific lot, or
+    someone who has the physical insert/box) to seed the ladder lookup table
+    correctly — this is a real data gap, not just a "which ladder" question.
+  *(Raised 2026-07-13, broadened same day while starting purity workflow
+  implementation.)*
 - [ ] **How should we handle low-contrast/washed-out source gel scans**
   (e.g. `260407_protein_purity.tif`, `4.16.26 Protein Purity.tif` in
   `decodeon_gel_images/Protein Purity/`)? Is that scan quality typical/

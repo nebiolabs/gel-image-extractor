@@ -6,11 +6,23 @@ standardized, reproducible pipeline.
 
 ## Status
 
-Design phase — architecture and MVP scope have been decided, but no
-implementation exists yet. See `AGENTS.md` for full project scope, data
-inventory, working agreements, and design decisions, and
+**Purity workflow: implemented and tested** (27 tests passing). **Activity
+workflow: not started.** See `AGENTS.md` for full project scope, data
+inventory, working agreements, design decisions, and implementation notes
+(including real findings from running this against real gel images), and
 `diagrams/program-flow.png` (or the `.mmd` source) for the current
 architecture sketch.
+
+```
+uv sync
+uv run gelx purity analyze "data/decodeon_gel_images/Protein Purity/8.6.25 Protein Purity.tif" \
+  --target-mw 29.267 --allow-heuristic
+uv run pytest
+```
+
+No verified ladder band sizes exist yet (see `QUESTIONS_FOR_USERS.md`), so
+real runs currently need `--allow-heuristic` or an explicit `--ladder-bands`
+list rather than `--ladder <name>`.
 
 ## What this project does (planned)
 
@@ -30,8 +42,9 @@ data but isn't scoped in yet; see `QUESTIONS_FOR_USERS.md`.
 
 Both existing workflows share a common image-processing core (lane/grid
 segmentation, ladder detection & calibration, band/peak detection); each has
-its own workflow and output on top of that core. Purity is being built first.
-See `AGENTS.md`'s "Design Decisions" section for the full reasoning.
+its own workflow and output on top of that core. Purity was built first, and
+is implemented; activity hasn't been started. See `AGENTS.md`'s "Design
+Decisions" section for the full reasoning.
 
 For purity specifically, target-band identification is MW-based by default
 (ladder calibrated via a known lookup table or a `--ladder-bands` override);
@@ -47,9 +60,9 @@ See `AGENTS.md` for the full rationale.
 - **Stack:** Python 3.11+; `numpy` + `scipy` + `scikit-image` for image
   processing; `argparse` for the CLI; `pyproject.toml` + `uv` for packaging/
   dependencies; `pytest` for testing.
-- **Interface:** one CLI entry point with subcommands (e.g.
-  `<tool> purity analyze gel.tif`), not separate binaries per workflow.
-  Structured so a UI can be layered on later. Every flag (`--lane`,
+- **Interface:** one CLI entry point with subcommands (`gelx purity analyze
+  gel.tif ...`), not separate binaries per workflow. Structured so a UI can
+  be layered on later. Every flag (`--lane`,
   `--ladder-bands`, `--allow-heuristic`, etc.) must be clearly documented in
   the CLI's own `--help` output, not just in external docs — end users of
   this tool aren't expected to be CLI-comfortable.
@@ -67,7 +80,12 @@ See `AGENTS.md` for the full rationale.
   unit tests, plus integration tests against the real example gel images in
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
-  external ground truth exists) encoded as an actual automated test.
+  external ground truth exists) encoded as an actual automated test. Purity
+  currently has 27 passing tests covering all of this.
+- Running this against real images surfaced some non-obvious findings (a
+  data file that's actually a screenshot with UI chrome, real gel photos not
+  being on a white background, a known bias in the heuristic fallback) —
+  see `AGENTS.md`'s "Implementation Status" section for the full detail.
 - No git actions (commit/push) happen without explicit user consent — see
   `AGENTS.md`'s "Working Agreements".
 - Open questions that need a domain expert's input (not just an engineering

@@ -1,11 +1,12 @@
 %% program-flow.mmd
-%% NOTE: No implementation exists yet. This reflects design decisions made as
-%% of 2026-07-13 (see AGENTS.md "Design Decisions"), not real code — it should
-%% be replaced with an actual class/sequence diagram once implementation
-%% exists.
+%% NOTE: Reflects the purity workflow as actually implemented and tested
+%% (src/gel_extractor/, 27 tests passing) plus the activity workflow's
+%% still-conceptual design (see AGENTS.md "Design Decisions" and
+%% "Implementation Status"). Not a full class/sequence diagram -- still a
+%% data-flow sketch, just one grounded in working code on the purity side.
 
 flowchart TD
-    Note["⚠ No code yet — reflects decided design,<br/>see AGENTS.md Design Decisions"]
+    Note["✅ Purity: implemented & tested (27 tests)<br/>⚠ Activity: conceptual only, not built<br/>see AGENTS.md Implementation Status"]
 
     Input["Gel image input<br/>(TIFF / PNG / JPG)"]
 
@@ -15,13 +16,15 @@ flowchart TD
         BandDet["Band / peak detection<br/>(intensity profile + baseline correction)"]
     end
 
-    PurityLabel["purity workflow<br/>MVP — build first"]
+    PurityLabel["purity workflow<br/>implemented (gelx purity analyze)"]
     subgraph PurityWF[" "]
-        AutoLane["Auto-detect lanes<br/>(column intensity projection)"]
+        AutoLane["Auto-detect lanes<br/>(column intensity projection,<br/>baseline-corrected -- real gel<br/>photos aren't on white background)"]
         LadderCal{"Ladder calibrated?<br/>(known ladder, or<br/>--ladder-bands given)"}
-        MWMatch["Find band nearest<br/>expected MW<br/>(±15-20% tolerance, placeholder)"]
-        Heuristic["--allow-heuristic:<br/>fallback to largest/darkest band<br/>(flagged low-confidence)"]
-        ErrorOut["Error: cannot calibrate ladder —<br/>requires --ladder-bands or<br/>--allow-heuristic"]
+        MWMatch["Find band(s) nearest<br/>expected MW<br/>(±17.5% tolerance, placeholder default)"]
+        MatchFound{"Band found within<br/>tolerance for this lane?"}
+        NotFound["Per-lane result:<br/>confidence = not-found<br/>(purity_percent = null)"]
+        Heuristic["--allow-heuristic:<br/>fallback to largest band<br/>(flagged low-confidence)"]
+        ErrorOut["Error: cannot calibrate ladder --<br/>requires --ladder-bands or<br/>--allow-heuristic"]
         PurityCalc["purity % =<br/>target band area / total lane area"]
         LaneResult["LaneResult data model<br/>(lane, purity_percent, confidence,<br/>target_mw_expected, matched_band_mw)"]
         TableOut["Table (default, stdout)"]
@@ -29,10 +32,10 @@ flowchart TD
         JsonOut["--json [PATH]"]
     end
 
-    ActivityLabel["activity workflow<br/>Deferred — rule-based, not ML"]
+    ActivityLabel["activity workflow<br/>Not started -- rule-based planned, not ML"]
     subgraph ActivityWF[" "]
         GridDet["96-well grid detection"]
-        Baseline["Compare each well vs its own<br/>Normalization-image baseline<br/>(primary — no digest-condition<br/>data needed from user)"]
+        Baseline["Compare each well vs its own<br/>Normalization-image baseline<br/>(primary -- no digest-condition<br/>data needed from user)"]
         ExpectedFrag["Optional future validation:<br/>expected fragment size(s)<br/>via substrate + ladder<br/>(NEBcutter tie-in, not required)"]
         Classify["Classify well:<br/>Active / Partial / Dead"]
         Heatmap["Well position × time heatmap"]
@@ -46,8 +49,11 @@ flowchart TD
     PurityLabel -.-> AutoLane
     ActivityLabel -.-> GridDet
     AutoLane --> LadderCal
-    LadderCal -- yes --> MWMatch --> PurityCalc
-    LadderCal -- "no, heuristic allowed" --> Heuristic --> PurityCalc
+    LadderCal -- yes --> MWMatch --> MatchFound
+    MatchFound -- yes --> PurityCalc
+    MatchFound -- "no, heuristic allowed" --> Heuristic --> PurityCalc
+    MatchFound -- "no, no flag given" --> NotFound --> LaneResult
+    LadderCal -- "no, heuristic allowed" --> Heuristic
     LadderCal -- "no, no flag given" --> ErrorOut
     PurityCalc --> LaneResult
     LaneResult --> TableOut

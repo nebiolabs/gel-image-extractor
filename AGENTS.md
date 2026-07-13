@@ -84,12 +84,12 @@ without cause:
   (image I/O, ladder detection/calibration, lane/grid segmentation, band/peak
   detection) and two thin, independent workflow modules on top — `purity` and
   `activity` — rather than two separate repos or one forced single pipeline.
-  Rough intended layout:
+  Actual layout (as implemented):
   ```
-  gel_extractor/
+  src/gel_extractor/
     core/       # shared image-processing primitives
-    purity/     # sub-project 1 workflow
-    activity/   # sub-project 2 workflow
+    purity/     # sub-project 1 workflow (implemented)
+    activity/   # sub-project 2 workflow (not yet built)
   ```
 - **Build order: purity first.** It's a single small gel (not a 96-well grid),
   so it validates `core`'s primitives (ladder detection, band/peak finding) on
@@ -193,11 +193,9 @@ without cause:
   wheels and doesn't need conda's non-Python binary management); `pytest` for
   testing.
 - **One CLI entry point with subcommands (confirmed 2026-07-13)**, not
-  separate binaries per workflow — e.g. `<tool> purity analyze gel.tif`,
-  reflecting the actual shared-core/separate-workflows architecture. Exact
-  command name not yet finalized (used as a placeholder in discussion so
-  far) — pick something reasonable during implementation, low-stakes enough
-  not to need a full design discussion.
+  separate binaries per workflow — e.g. `gelx purity analyze gel.tif`,
+  reflecting the actual shared-core/separate-workflows architecture. Command
+  name finalized as **`gelx`** during implementation.
 - **Output formats (decided 2026-07-13): table (default) + optional CSV/JSON,
   additive not mutually exclusive.** Human-readable table always prints to
   stdout by default. `--csv [PATH]`: if a path is given, writes a CSV file
@@ -265,6 +263,77 @@ without cause:
   encoded as an actual automated test, not just an informal sanity check —
   it's our main correctness signal given the lack of external ground truth.
 
+## Implementation Status
+
+The purity workflow is implemented and passing its test suite (built the
+same day design finished, so no date-of-completion note beyond "2026-07-13").
+
+- **Package layout:** `src/gel_extractor/{core,purity}/` (src-layout),
+  entry point `gelx` (`gelx purity analyze <image> --target-mw KDA [...]`).
+  Run via `uv run gelx ...`; tests via `uv run pytest`.
+- **Test suite:** 27 tests passing — unit tests per `core` module (synthetic,
+  deterministic data), an end-to-end pipeline test via a synthetic gel image
+  file, CLI tests (table/CSV/JSON/error paths), and integration tests
+  against a real example gel image, including the dilution-series
+  self-consistency check.
+- **`--help` gotcha fixed:** argparse only expands `%%` → `%` in per-argument
+  `help=` text, not in a parser's `description=` — a literal `%%` was
+  showing up in `gelx purity analyze --help` until this was caught by
+  actually reading the rendered output, not just the source.
+
+### Real findings from running this against real data
+
+These surfaced only once real images hit real code — recorded here because
+they're non-obvious and expensive to rediscover:
+
+- **`data/daria_data/attachments/*.png` are Benchling attachment-viewer
+  *screenshots* (full UI chrome included), not clean gel photos.** Confirmed
+  by matching the filename visible inside
+  `01_HpyCH4IV_PDEV1284_Protein_Purity.png`'s screenshot to an actual file in
+  `data/decodeon_gel_images/Protein Purity/` — that folder holds the clean
+  underlying originals. **Use the `decodeon_gel_images` versions for any
+  real image processing/testing against these particular proteins**, not the
+  `daria_data` PNGs (which were fine for visual review, not for a pipeline).
+- **Real gel photos aren't on a white background**, so the initial lane
+  auto-detection (threshold against the column-sum profile's absolute peak)
+  completely failed on a real image — it found one giant "lane" spanning the
+  whole gel rectangle. Fix: baseline-correct the column-intensity profile
+  before thresholding, reusing the *same* rolling-baseline function already
+  built for band detection along the other axis
+  (`core.bands.rolling_minimum_baseline`). This validated the modular
+  architecture decision in practice — the fix was a small, localized change
+  in `core/lanes.py`, not a rewrite.
+- **Tuned starting values** (still placeholders, per the Design Decisions
+  above, but now concrete in code rather than abstract): lane-detection
+  threshold fraction 0.03 (of the baseline-corrected column profile's peak),
+  baseline rolling-window 51px (same default as band detection, for
+  consistency), lane top-margin crop 5%, MW tolerance 17.5% (midpoint of the
+  ±15-20% range). Found via direct experimentation against
+  `decodeon_gel_images/Protein Purity/8.6.25 Protein Purity.tif`, not derived
+  from first principles — expect further tuning as more real gels are run.
+- **`KNOWN_LADDERS` ships empty** (`core/ladder.py`) — deliberately not
+  seeded with a guessed P7719 band list, per the unresolved question in
+  `QUESTIONS_FOR_USERS.md`. `--ladder-bands` is required for MW-matching
+  until a verified entry is added.
+- **A per-lane "not-found" state was added**, extending (not contradicting)
+  the original target-band-identification decision: that decision covered
+  what happens when the *ladder itself* can't be calibrated (hard error
+  unless `--allow-heuristic`). It didn't say what should happen when the
+  ladder calibrates fine but one *specific* lane's target band isn't found
+  within tolerance. Implemented as: that lane gets `confidence: "not-found"`
+  and `purity_percent: null` in its own result row, without aborting the
+  rest of the lanes in the same run. This is a reasonable extension made
+  during implementation, not something pre-approved at this granularity —
+  flagging it here in case it should be revisited.
+- **The heuristic (largest-band) fallback shows a real, understood bias**:
+  on a real dilution series, fainter lanes lose their faint contaminant
+  bands below the detection threshold first, which inflates apparent purity
+  as dilution increases. The dilution-series self-consistency test passes
+  but with a loose bound (~70 points; observed spread was ~59) — documented
+  inline in `tests/test_purity_integration.py`. Expected to tighten
+  substantially once MW-matching can be validated against a verified ladder
+  (blocked on the `KNOWN_LADDERS` gap above).
+
 ## Open Questions
 
 No open internal design/architecture questions remain as of this update
@@ -280,7 +349,12 @@ rather than guessing.
 - `data/daria_data/project.md` — original proposal text for sub-project 1.
 - `data/daria_data/attachments/` — 4 example gel images (PNG/JPG) + 1 PDF of an
   email thread with additional per-protein context (molecular weights, ladder
-  used, Benchling links).
+  used, Benchling links). **Important (found 2026-07-13 during
+  implementation): these PNGs are Benchling attachment-viewer screenshots
+  (full UI chrome included), not clean gel photos** — see Implementation
+  Status below. `data/decodeon_gel_images/Protein Purity/` has the clean
+  originals for at least the HpyCH4IV one (`8.6.25 Protein Purity.tif`,
+  confirmed by the filename visible in the screenshot).
 - `data/gia_data/project.md` — original proposal text for sub-project 2.
 - `data/gia_data/attachments/` — 22 raw 96-well gel scans (TIFF), 2 PDFs of the
   resulting heatmap plots, 2 `.txt` files with the target well-by-time
@@ -349,11 +423,10 @@ Add to it as new questions surface; don't resolve them by guessing.
 - **No unilateral design assumptions.** This is a from-scratch project; decide
   architecture, libraries, algorithms, and scope iteratively and explicitly
   with the user rather than inferring intent. When in doubt, ask.
-- **Current phase: design decided, no code written yet.** Architecture and the
-  purity-workflow approach have been discussed and decided (see Design
-  Decisions above), but implementation hasn't started. Don't start writing the
-  actual pipeline code until that's explicitly requested — decisions being
-  made doesn't imply a green light to implement.
+- **Current phase: purity workflow implemented and tested; activity workflow
+  not started.** See Implementation Status above. Don't start building the
+  activity workflow until that's explicitly requested — finishing purity
+  doesn't imply a green light to move on automatically.
 - **Document thoroughly enough to explain the whole system to non-implementing
   stakeholders later.** Jacob needs to be able to walk the submitter/the submitter/a team member/
   the reviewer through what was built and why at the end, not just hand them working
@@ -369,11 +442,10 @@ Add to it as new questions surface; don't resolve them by guessing.
 ## Architecture Diagram
 
 `diagrams/program-flow.mmd` (raw Mermaid source) and `diagrams/program-flow.png`
-(rendered) capture how the program works. As of this writing there is no code,
-so the diagram is a conceptual data-flow sketch of the shared pipeline
-described above, not a real class/method or sequence diagram — it should be
-replaced with one once actual implementation exists and architecture has been
-discussed. Render with: `mmdc -i diagrams/program-flow.mmd -o diagrams/program-flow.png -b white -s 2`.
+(rendered) capture how the program works. The purity side now reflects a
+working, tested implementation (see Implementation Status); the activity side
+is still a conceptual sketch, since that workflow hasn't been built. Render
+with: `mmdc -i diagrams/program-flow.mmd -o diagrams/program-flow.png -b white -s 2`.
 
 ### "update docs" convention
 
@@ -392,6 +464,8 @@ don't let them drift out of sync.
   RabbitMQ, Streamlit, etc.) down to what's actually relevant: Python
   build/cache artifacts, virtual envs, `.idea/` (JetBrains), standard macOS
   junk files, and the `data/` directory.
-- Language/framework/dependency tooling is now decided — see the "Tech stack"
-  entry in Design Decisions (Python 3.11+, numpy/scipy/scikit-image,
-  argparse, pyproject.toml + uv, pytest).
+- Language/framework/dependency tooling is now decided and implemented — see
+  the "Tech stack" entry in Design Decisions (Python 3.11+,
+  numpy/scipy/scikit-image, argparse, pyproject.toml + uv, pytest) and
+  "Implementation Status" for the actual package layout (`src/gel_extractor/`,
+  `tests/`, `pyproject.toml`, `uv.lock`).
