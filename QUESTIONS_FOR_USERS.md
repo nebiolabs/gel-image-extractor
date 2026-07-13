@@ -62,6 +62,18 @@ outside domain knowledge or a business/scope call.
   lanes), or is the plain ladder + dilution-series format — seen in all 11
   of the newly added example images, with zero examples of the standards
   format — the more realistic default going forward? *(Raised 2026-07-13.)*
+- [ ] **How should the tool handle the dilution-detectability limit?**
+  Confirmed 2026-07-13 (user validated this as a real, expected concern, not
+  just a detection-parameter artifact): at some dilution level, faint
+  contaminant bands become undetectable before the target band does, which
+  systematically inflates apparent purity in the more-dilute lanes of a
+  series (observed 29% → 48% across one real dilution series). Should the
+  tool (a) flag low-total-signal lanes as lower-confidence rather than
+  reporting them at face value, (b) default to treating the most-
+  concentrated ("Total") lane as the single authoritative measurement rather
+  than reporting/aggregating across the whole dilution series, (c) something
+  else, or (d) is there a recommended dilution range end users already use
+  in practice to avoid this? *(Raised 2026-07-13.)*
 
 ## Activity workflow
 
@@ -85,7 +97,8 @@ outside domain knowledge or a business/scope call.
 
 ---
 
-*Last updated: 2026-07-13 (P7719 band-size question resolved this update; see
-`AGENTS.md` "Known Limitations" for newer open engineering items that don't
-need end-user input). See `AGENTS.md` for full design context behind these
-questions.*
+*Last updated: 2026-07-13 (P7719 band-size question resolved; dilution-
+detectability-limit question added after user confirmed it as a real
+concern. See `AGENTS.md` "Known Limitations" for open engineering items that
+don't need end-user input). See `AGENTS.md` for full design context behind
+these questions.*

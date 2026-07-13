@@ -17,8 +17,15 @@ from gel_extractor.core.ladder import (
 from gel_extractor.core.lanes import detect_lanes
 
 # Placeholder -- see AGENTS.md Design Decisions ("±15-20% of expected MW,
-# deliberately approximate, to be tuned empirically").
-DEFAULT_MW_TOLERANCE_PERCENT = 17.5
+# deliberately approximate, to be tuned empirically"). Moved from the
+# midpoint (17.5%) to the top of that originally-discussed range after real
+# testing (2026-07-13): on a real gel, the true target band sat ~19% off the
+# calibrated MW (itself imperfect -- see core.ladder's window-search notes),
+# just outside 17.5% -- at 20%, 8 of 10 real sample lanes matched
+# consistently on the same MW (34.6-34.9 kDa) instead of falling back to
+# "not-found" or matching a coincidental smaller band instead of the real
+# dominant one. Still coarse; expect further tuning with more real images.
+DEFAULT_MW_TOLERANCE_PERCENT = 20.0
 
 
 @dataclass(frozen=True)

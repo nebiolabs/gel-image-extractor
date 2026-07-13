@@ -60,19 +60,13 @@ class LadderCalibration:
 # migration is log-linear, which compresses (and often merges) high-MW bands
 # long before it does low-MW ones -- a well-known, near-universal artifact,
 # not random noise. So instead of requiring an exact count match, we now
-# calibrate from whatever bands ARE confidently detected, anchored to the
-# best-resolved (lowest-MW) end of the known ladder, with a minimum band
+# calibrate from whatever bands ARE confidently detected, with a minimum band
 # count and a goodness-of-fit check so a bad guess still gets rejected rather
 # than silently miscalibrating everything downstream.
 MIN_MATCHED_BANDS = 3
-# 0.9 was too strict in practice: on a real gel, 2 of 9 detected "bands" in
-# the ladder lane were actually merged blobs (each really 2-3 true bands),
-# whose positions don't correspond to any single true MW -- this drags R^2
-# down (observed ~0.89) even though the *fitted curve* still accurately
-# locates real target bands in the well-resolved region (verified: predicted
-# position for a 29.267 kDa target landed right next to a real detected band
-# on that gel). 0.85 was chosen to admit that case while still rejecting
-# clearly-wrong fits (the poor-fit test case measures ~0.64).
+# 0.9 was too strict in practice: on a real gel, a plausible alignment (2 of
+# 11 known bands assumed undetected) fit at ~0.89. 0.85 admits that while
+# still rejecting clearly-wrong fits (the poor-fit test case measures ~0.64).
 MIN_R_SQUARED = 0.85
 
 
@@ -85,14 +79,21 @@ def calibrate_ladder(
     """Detect bands in a ladder lane's profile and fit a calibration curve.
 
     Doesn't require detecting every known band. If fewer bands are detected
-    than known sizes, assumes the undetected ones are the highest-MW entries
-    (SDS-PAGE resolves worst there) and calibrates from the best-resolved
-    low-MW subset instead. If more bands are detected than known sizes
-    (likely noise), keeps only the most prominent ones (by area). Raises
-    `LadderCalibrationError` if fewer than `min_matched_bands` are detected,
-    or if the resulting fit is poor (R² below `min_r_squared`) -- both
-    signal that the assumed correspondence probably doesn't hold, so it's
-    safer to refuse than to guess.
+    than known sizes, some known bands must have gone undetected somewhere
+    along the ladder -- but *where* isn't assumed. An earlier version of
+    this function always assumed undetected bands were the highest-MW ones
+    (SDS-PAGE resolves worst there), but real testing (2026-07-13) found a
+    real image where the opposite alignment fit meaningfully better (R²
+    0.95 vs. 0.89) and was independently corroborated by where the dominant
+    band actually sat in a real sample lane -- so assuming a fixed direction
+    is itself a real source of error. Instead: try every contiguous subset
+    of `known_mws` of the detected length, fit each against the detected
+    band positions, and keep whichever fits best. If more bands are detected
+    than known sizes (likely noise), keeps only the most prominent ones (by
+    area) before this search. Raises `LadderCalibrationError` if fewer than
+    `min_matched_bands` are detected, or if even the best-fitting alignment
+    is poor (R² below `min_r_squared`) -- both signal that no assumed
+    correspondence can be trusted, so it's safer to refuse than to guess.
     """
     corrected = correct_baseline(profile)
     bands = detect_bands(corrected)
@@ -107,30 +108,35 @@ def calibrate_ladder(
     k = min(len(bands), len(known_mws))
     ordered_bands = sorted(bands, key=lambda b: b.area, reverse=True)[:k]
     ordered_bands = sorted(ordered_bands, key=lambda b: b.center)
-
-    assumed_mws = sorted(known_mws, reverse=True)[-k:]  # best-resolved, lowest-MW subset
-
     positions = np.array([b.center for b in ordered_bands])
-    log_mws = np.log10(assumed_mws)
 
-    slope, intercept = np.polyfit(positions, log_mws, 1)
-    predicted = slope * positions + intercept
-    ss_res = float(np.sum((log_mws - predicted) ** 2))
-    ss_tot = float(np.sum((log_mws - log_mws.mean()) ** 2))
-    r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+    known_sorted = sorted(known_mws, reverse=True)
+    best = None
+    for start in range(len(known_sorted) - k + 1):
+        window = known_sorted[start : start + k]
+        log_mws = np.log10(window)
+        slope, intercept = np.polyfit(positions, log_mws, 1)
+        predicted = slope * positions + intercept
+        ss_res = float(np.sum((log_mws - predicted) ** 2))
+        ss_tot = float(np.sum((log_mws - log_mws.mean()) ** 2))
+        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+        if best is None or r_squared > best[0]:
+            best = (r_squared, window, float(slope), float(intercept))
+
+    r_squared, window, slope, intercept = best
 
     if r_squared < min_r_squared:
         raise LadderCalibrationError(
             f"Best-effort ladder calibration using {k} band(s) had a poor fit "
-            f"(R²={r_squared:.2f}) -- the assumed size assignment likely "
-            "doesn't hold for this image. Try --ladder-bands with an explicit, "
-            "verified list, or --allow-heuristic."
+            f"(best R²={r_squared:.2f} across all plausible size alignments) "
+            "-- no assumed size assignment fits well enough to trust. Try "
+            "--ladder-bands with an explicit, verified list, or --allow-heuristic."
         )
 
     return LadderCalibration(
         positions=positions,
-        mws=np.array(assumed_mws),
-        slope=float(slope),
-        intercept=float(intercept),
+        mws=np.array(window),
+        slope=slope,
+        intercept=intercept,
         r_squared=r_squared,
     )

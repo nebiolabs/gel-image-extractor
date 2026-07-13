@@ -6,7 +6,7 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (31 tests passing). **Activity
+**Purity workflow: implemented and tested** (35 tests passing). **Activity
 workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
@@ -23,9 +23,14 @@ uv run pytest
 
 `--ladder P7719` is now a real, verified option (see `AGENTS.md`). Ladder
 calibration is deliberately lenient — it works from however many bands are
-confidently detected rather than requiring every known band to resolve —
-but real MW-matching still has open accuracy questions (see AGENTS.md's
-Known Limitations), so treat results as directional for now, not exact.
+confidently detected, empirically picking whichever plausible size alignment
+fits best, rather than requiring every known band to resolve or assuming a
+fixed direction for missing ones. Real MW-matching now produces consistent
+results across most lanes of the one real gel tested end to end, but there's
+a confirmed, unmitigated limitation: at high dilution, faint contaminant
+bands become undetectable before the target band does, which inflates
+apparent purity — see AGENTS.md's Known Limitations. Treat results as
+directional for now, not exact.
 
 ## What this project does (planned)
 
@@ -84,12 +89,14 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 31 passing tests covering all of this.
+  currently has 35 passing tests covering all of this.
 - Running this against real images surfaced some non-obvious findings (a
   data file that's actually a screenshot with UI chrome, real gel photos not
-  being on a white background, a known bias in the heuristic fallback, and —
-  after seeding a verified P7719 ladder — a possible systematic MW-matching
-  bias and a band-detection noise-robustness gap on faint lanes) — see
+  being on a white background, a band-detection noise-robustness gap on
+  faint lanes — now fixed, a ladder-calibration approach that had to stop
+  assuming a fixed direction for missing bands — now fixed, and a confirmed,
+  still-unmitigated limitation where high dilution inflates apparent purity
+  by making contaminant bands undetectable before the target band) — see
   `AGENTS.md`'s "Implementation Status" and "Known Limitations" sections for
   the full detail.
 - **Purity calculation is confirmed to stay a direct single-lane

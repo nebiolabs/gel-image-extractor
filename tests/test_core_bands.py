@@ -1,6 +1,6 @@
 import numpy as np
 
-from gel_extractor.core.bands import correct_baseline, detect_bands
+from gel_extractor.core.bands import correct_baseline, detect_bands, estimate_noise_level
 
 
 def test_correct_baseline_removes_slow_drift():
@@ -45,3 +45,35 @@ def test_detect_bands_taller_peak_has_larger_area():
     bands = sorted(detect_bands(profile), key=lambda b: b.center)
 
     assert bands[1].area > bands[0].area
+
+
+def test_detect_bands_rejects_pure_noise_on_faint_profile():
+    # Simulates a near-blank lane: tiny random fluctuations, no real band.
+    # A purely relative threshold (5% of max) would treat many of these
+    # bumps as "bands" since max itself is tiny -- the absolute noise-floor
+    # gate should reject all of them instead.
+    rng = np.random.default_rng(42)
+    profile = np.abs(rng.normal(loc=0.1, scale=0.05, size=300))
+
+    assert detect_bands(profile) == []
+
+
+def test_detect_bands_keeps_real_peak_above_noise_floor():
+    rng = np.random.default_rng(42)
+    x = np.arange(300)
+    noise = np.abs(rng.normal(loc=0.1, scale=0.05, size=300))
+    real_peak = 5.0 * np.exp(-((x - 150) ** 2) / (2 * 4.0**2))
+    profile = noise + real_peak
+
+    bands = detect_bands(profile)
+
+    assert len(bands) == 1
+    assert abs(bands[0].center - 150) < 3
+
+
+def test_estimate_noise_level_higher_for_noisier_profile():
+    rng = np.random.default_rng(0)
+    quiet = np.abs(rng.normal(loc=0.1, scale=0.02, size=200))
+    noisy = np.abs(rng.normal(loc=0.1, scale=0.5, size=200))
+
+    assert estimate_noise_level(noisy) > estimate_noise_level(quiet)

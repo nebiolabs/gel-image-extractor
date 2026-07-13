@@ -1,12 +1,12 @@
 %% program-flow.mmd
 %% NOTE: Reflects the purity workflow as actually implemented and tested
-%% (src/gel_extractor/, 27 tests passing) plus the activity workflow's
+%% (src/gel_extractor/, 35 tests passing) plus the activity workflow's
 %% still-conceptual design (see AGENTS.md "Design Decisions" and
 %% "Implementation Status"). Not a full class/sequence diagram -- still a
 %% data-flow sketch, just one grounded in working code on the purity side.
 
 flowchart TD
-    Note["✅ Purity: implemented & tested (31 tests)<br/>⚠ Activity: conceptual only, not built<br/>see AGENTS.md Implementation Status<br/>+ Known Limitations"]
+    Note["✅ Purity: implemented & tested (35 tests)<br/>⚠ Activity: conceptual only, not built<br/>see AGENTS.md Implementation Status<br/>+ Known Limitations"]
 
     Input["Gel image input<br/>(TIFF / PNG / JPG)"]
 
@@ -19,8 +19,8 @@ flowchart TD
     PurityLabel["purity workflow<br/>implemented (gelx purity analyze)"]
     subgraph PurityWF[" "]
         AutoLane["Auto-detect lanes<br/>(column intensity projection,<br/>baseline-corrected -- real gel<br/>photos aren't on white background)"]
-        LadderCal{"Ladder calibrated?<br/>(best-effort: uses whichever<br/>bands are confidently detected,<br/>min 3 bands + R²≥0.85)"}
-        MWMatch["Find band(s) nearest<br/>expected MW<br/>(±17.5% tolerance, placeholder default)"]
+        LadderCal{"Ladder calibrated?<br/>(best-effort: searches all plausible<br/>size alignments for detected bands,<br/>keeps best fit -- min 3 bands + R²≥0.85)"}
+        MWMatch["Find band(s) nearest<br/>expected MW<br/>(±20% tolerance, placeholder default)"]
         MatchFound{"Band found within<br/>tolerance for this lane?"}
         NotFound["Per-lane result:<br/>confidence = not-found<br/>(purity_percent = null)"]
         Heuristic["--allow-heuristic:<br/>fallback to largest band<br/>(flagged low-confidence)"]

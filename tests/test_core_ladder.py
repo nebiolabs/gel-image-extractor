@@ -43,7 +43,11 @@ def test_calibrate_ladder_raises_when_too_few_bands_detected():
 
 def test_calibrate_ladder_works_with_fewer_bands_than_known():
     # Simulates real SDS-PAGE log-compression: the top 2 (highest-MW) known
-    # bands never resolved into detectable peaks, but the bottom 4 did.
+    # bands never resolved into detectable peaks, but the bottom 4 did. The
+    # bottom-4 window should win the search since it's the true generating
+    # alignment (near-perfect fit), not because of any fixed "assume top is
+    # missing" rule -- see test_calibrate_ladder_finds_best_fitting_window
+    # for a case where the correct window is neither the top nor the bottom.
     known_mws = [250, 180, 100, 50, 25, 10]
     slope, intercept = -0.01, 3.0
     detected_mws = [100, 50, 25, 10]  # the best-resolved, lowest-MW subset
@@ -55,6 +59,24 @@ def test_calibrate_ladder_works_with_fewer_bands_than_known():
     assert len(calibration.positions) == 4
     for pos, mw in zip(positions, detected_mws):
         assert abs(calibration.mw_at(pos) - mw) / mw < 0.05
+
+
+def test_calibrate_ladder_finds_best_fitting_window_not_just_top_or_bottom():
+    # The detected bands truly correspond to a *middle* slice of the known
+    # ladder (neither the highest-MW nor the lowest-MW subset) -- verifies
+    # the search isn't hardcoded to assume missing bands are always at one
+    # end (real image testing 2026-07-13 found a case where the opposite of
+    # our original "assume top" rule fit meaningfully better).
+    known_mws = [250, 180, 130, 95, 72, 55, 43, 34, 26, 17, 10]
+    slope, intercept = -0.01, 3.0
+    true_window = [95, 72, 55, 43]  # a middle slice, not top or bottom
+    positions = [(np.log10(mw) - intercept) / slope for mw in true_window]
+    profile = _synthetic_ladder_profile(positions, height=int(max(positions)) + 50)
+
+    calibration = calibrate_ladder(profile, known_mws)
+
+    assert list(calibration.mws) == true_window
+    assert calibration.r_squared > 0.99
 
 
 def test_calibrate_ladder_keeps_most_prominent_bands_when_over_detected():
@@ -80,13 +102,14 @@ def test_calibrate_ladder_keeps_most_prominent_bands_when_over_detected():
 
 
 def test_calibrate_ladder_raises_on_poor_fit():
-    # 4 clearly-separated, individually-detectable bands whose spacing is
-    # inconsistent with a log-linear fit to the assumed bottom-4 known sizes
-    # [150, 140, 130, 10] (R^2 ~0.64, verified numerically) -- signals the
-    # assumed correspondence doesn't hold, not just "too few bands."
-    profile = _synthetic_ladder_profile([50, 90, 130, 170], height=230)
+    # 4 clearly-separated, individually-detectable bands whose spacing
+    # doesn't fit *any* contiguous 4-band window of the known P7719 sizes
+    # well (best achievable R^2 across all windows is ~0.72, verified
+    # numerically by brute-force search) -- signals no assumed correspondence
+    # can be trusted, not just "the wrong window was picked."
+    profile = _synthetic_ladder_profile([190.8, 812.7, 855.1, 889.4], height=950)
     with pytest.raises(LadderCalibrationError):
-        calibrate_ladder(profile, [250, 200, 150, 140, 130, 10], min_r_squared=0.9)
+        calibrate_ladder(profile, [250, 180, 130, 95, 72, 55, 43, 34, 26, 17, 10])
 
 
 def test_get_ladder_bands_raises_for_unknown_name():

@@ -10,6 +10,29 @@ from scipy.signal import find_peaks
 DEFAULT_BASELINE_WINDOW = 51
 DEFAULT_MIN_PROMINENCE_FRACTION = 0.05
 DEFAULT_MIN_WIDTH = 2
+# A prominence floor purely relative to the profile's own max breaks down on
+# faint/low-signal lanes: if the true signal is tiny, ordinary scan noise can
+# exceed "5% of a tiny max" and gets counted as dozens of fake bands (found
+# 2026-07-13 -- one real near-blank lane produced 98 "bands" this way). This
+# adds an absolute noise-floor gate estimated from point-to-point
+# variability (first-order differences), which stays low and stable for real
+# signal (bands are smooth/wide, so adjacent-pixel jumps are small even at
+# high amplitude) but correctly flags a lane as "mostly noise" when its
+# tallest peak isn't meaningfully above that floor.
+DEFAULT_MIN_SNR = 10.0
+
+
+def estimate_noise_level(profile: np.ndarray) -> float:
+    """Estimate background noise via the MAD of first-order differences.
+
+    Robust to real peaks (which vary smoothly point-to-point regardless of
+    height) unlike a plain MAD/std of the profile itself (which real peaks
+    inflate directly).
+    """
+    if profile.size < 2:
+        return 0.0
+    diffs = np.diff(profile)
+    return float(np.median(np.abs(diffs)) * 1.4826)
 
 
 @dataclass(frozen=True)
@@ -52,17 +75,23 @@ def detect_bands(
     profile: np.ndarray,
     min_prominence_fraction: float = DEFAULT_MIN_PROMINENCE_FRACTION,
     min_width: int = DEFAULT_MIN_WIDTH,
+    min_snr: float = DEFAULT_MIN_SNR,
 ) -> list[Band]:
     """Find bands (peaks) in a baseline-corrected 1D intensity profile.
 
-    Each band's extent comes from scipy's peak-width estimate at half
-    prominence; area is the trapezoidal integral of the profile over that
-    extent.
+    A peak must clear both a relative floor (`min_prominence_fraction` of
+    the profile's own max) and an absolute noise-floor gate
+    (`min_snr` times the estimated background noise level) -- the relative
+    floor alone isn't enough on a faint/low-signal profile, see
+    `DEFAULT_MIN_SNR`. Each band's extent comes from scipy's peak-width
+    estimate at half prominence; area is the trapezoidal integral of the
+    profile over that extent.
     """
     if profile.size == 0 or profile.max() <= 0:
         return []
 
-    prominence = profile.max() * min_prominence_fraction
+    noise_floor = estimate_noise_level(profile) * min_snr
+    prominence = max(profile.max() * min_prominence_fraction, noise_floor)
     peaks, properties = find_peaks(profile, prominence=prominence, width=min_width)
 
     bands = []

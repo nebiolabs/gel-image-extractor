@@ -154,16 +154,23 @@ without cause:
     failed on every real image tried, for two different reasons (some bands
     genuinely merge at the high-MW end due to SDS-PAGE's log-linear
     migration — a well-known, near-universal compression artifact, not
-    randomness; other images over-detect noise as extra "bands"). New rule:
-    calibrate from however many bands ARE confidently detected, anchored to
-    the best-resolved (lowest-MW) subset of the known ladder (assume any
-    shortfall is at the high-MW end, since that's physically where
-    resolution is worst); if more bands are detected than known sizes, keep
-    only the most prominent ones by area. Guardrails so this doesn't silently
-    miscalibrate: requires at least 3 matched bands, and rejects the fit if
-    its R² is below 0.85 (loosened from an initial 0.9 after confirming a
-    real 0.89-R² fit — degraded only by 2 merged-blob points — still
-    correctly located a real target band; see Implementation Status).
+    randomness; other images over-detect noise as extra "bands").
+  - **Which known bands are "missing" is determined empirically, not
+    assumed (revised again, same day, after further real testing).** The
+    first version of this fix always assumed any undetected bands were the
+    highest-MW ones (physically reasonable — that's where SDS-PAGE resolves
+    worst). Real testing found a case where the *opposite* alignment fit
+    meaningfully better (R² 0.95 vs. 0.89) and was independently corroborated
+    by where the dominant band actually sat in a real sample lane — so a
+    fixed directional assumption is itself a real source of error. Current
+    rule: try every contiguous subset of the known ladder sizes that matches
+    the detected band count, fit each, and keep whichever fits best. If more
+    bands are detected than known sizes (likely noise), keep only the most
+    prominent ones by area before this search. Guardrails so this doesn't
+    silently miscalibrate: requires at least 3 matched bands, and rejects
+    even the best-fitting alignment if its R² is below 0.85 (loosened from
+    an initial 0.9 after confirming a real ~0.89-0.95-R² fit still correctly
+    located a real target band; see Implementation Status).
   - **If the ladder still can't be calibrated** (too few bands detected, or
     fit quality too poor even with the relaxed matching above), the tool
     refuses to process by default (hard error) rather than silently
@@ -303,7 +310,7 @@ same day design finished, so no date-of-completion note beyond "2026-07-13").
 - **Package layout:** `src/gel_extractor/{core,purity}/` (src-layout),
   entry point `gelx` (`gelx purity analyze <image> --target-mw KDA [...]`).
   Run via `uv run gelx ...`; tests via `uv run pytest`.
-- **Test suite:** 31 tests passing — unit tests per `core` module (synthetic,
+- **Test suite:** 35 tests passing — unit tests per `core` module (synthetic,
   deterministic data), an end-to-end pipeline test via a synthetic gel image
   file, CLI tests (table/CSV/JSON/error paths), and integration tests
   against a real example gel image, including the dilution-series
@@ -347,11 +354,14 @@ they're non-obvious and expensive to rediscover:
   above, but now concrete in code rather than abstract): lane-detection
   threshold fraction 0.03 (of the baseline-corrected column profile's peak),
   baseline rolling-window 51px (same default as band detection, for
-  consistency), lane top-margin crop 5%, MW tolerance 17.5% (midpoint of the
-  ±15-20% range), ladder-calibration minimum 3 matched bands and minimum R²
-  0.85. Found via direct experimentation against several real images in
-  `decodeon_gel_images/Protein Purity/` — expect further tuning as more real
-  gels are run.
+  consistency), lane top-margin crop 5%, MW tolerance **20%** (top of the
+  originally-discussed ±15-20% range — moved up from an initial 17.5%
+  midpoint after real testing showed the true target band sitting ~19% off
+  the calibrated MW, just outside 17.5%), ladder-calibration minimum 3
+  matched bands and minimum R² 0.85, band-detection noise floor 10× the
+  estimated point-to-point noise level. Found via direct experimentation
+  against several real images in `decodeon_gel_images/Protein Purity/` —
+  expect further tuning as more real gels are run.
 - **A per-lane "not-found" state was added**, extending (not contradicting)
   the original target-band-identification decision: that decision covered
   what happens when the *ladder itself* can't be calibrated (hard error
@@ -369,24 +379,40 @@ they're non-obvious and expensive to rediscover:
   but with a loose bound (~70 points; observed spread was ~59) — documented
   inline in `tests/test_purity_integration.py`.
 - **Ladder calibration against real P7719 data validated, then immediately
-  surfaced two more real issues** (2026-07-13, after seeding `KNOWN_LADDERS`):
-  tested MW-matching against `8.6.25 Protein Purity.tif` end to end. The
-  ladder itself calibrated (R²=0.886, above the relaxed 0.85 bar) and the
-  fitted curve's predicted position for the target MW (29.267 kDa) landed
-  right next to a real detected band — good evidence the relaxed calibration
-  produces a genuinely useful curve, not just a technically-passing one.
-  But: (1) one sample lane produced 98 "detected bands," almost certainly
-  noise, not real bands — our band-detection prominence threshold is purely
-  *relative* to that lane's own signal max, which breaks down on very
-  faint/low-signal lanes where scan noise can exceed "5% of a tiny max"; a
-  "match" that lane produced (29.1 vs. 29.267 kDa) was very likely
-  coincidental given 98 near-random candidate points, not a real detection.
-  (2) the other 9 (visually reasonable, 3-9 bands each) sample lanes found
-  **no** band within tolerance of the target MW at all — closest misses were
-  ~24 kDa (~18% low, just outside the ±17.5% tolerance), suggesting the
-  calibration curve may have a real systematic low bias, plausibly from the
-  2 merged-blob points also being included in the fit. **Neither issue is
-  fixed yet** — see Known Limitations below.
+  surfaced two more real issues — both now root-caused and fixed
+  (2026-07-13).** Testing MW-matching against `8.6.25 Protein Purity.tif`
+  end to end initially found: (1) one sample lane produced 98 "detected
+  bands," almost certainly noise — **fixed** by adding an absolute
+  noise-floor gate to `detect_bands` (estimated from point-to-point signal
+  variability, which stays low for real peaks regardless of height but is
+  comparable to the signal itself on a truly blank lane); that lane now
+  correctly detects 0 bands, and the healthy lanes barely changed (one
+  marginal band dropped from two of them). (2) the other 9 sample lanes
+  found no band within the (then 17.5%) tolerance of the target MW at all —
+  investigated by trying to exclude "merged" ladder bands via a width
+  heuristic, which turned out fragile (a genuinely single but heavily-
+  stained band was nearly indistinguishable by width from an actually-merged
+  blob). The real fix ended up being the empirical multi-window search
+  described above in Design Decisions, **plus** widening the MW tolerance to
+  20% once the better calibration revealed the true target band sat ~19%
+  off — just outside the old 17.5% bound. After both fixes: **8 of 10 real
+  sample lanes now match consistently on the same MW (34.6-34.9 kDa)**,
+  not a scattered mix of coincidental matches.
+- **Confirmed (not just suspected) limitation: a dilution-detectability
+  threshold skews purity at high dilution.** Even after the fixes above, the
+  matched-purity trend still increases with dilution (29% → 48% across the
+  series) — the same direction as the earlier heuristic-mode bias. Raised
+  this directly with the user, who confirmed it's a real, expected concern:
+  **at some dilution level, faint contaminant bands become undetectable
+  before the target band does, inflating the computed ratio** — not
+  primarily a detection-parameter bug, but a fundamental limit-of-detection
+  effect that any densitometry approach will face. This affects both
+  `heuristic` and `mw-matched` confidence modes. Not yet mitigated — see
+  Known Limitations below; also raised as a new question for end users
+  (`QUESTIONS_FOR_USERS.md`) about whether there's a recommended dilution
+  range or whether the most-concentrated ("Total") lane should be treated
+  as the authoritative measurement rather than aggregating across the whole
+  series.
 
 ## Known Limitations — Flagged for Later
 
@@ -413,21 +439,18 @@ recorded here specifically so they aren't lost or re-litigated from scratch.
   our example images, and not yet mitigated. Options range from a cheap
   inward margin on each lane's edges to full per-row adaptive lane tracing —
   deferred until confirmed necessary against real images.
-- **~18% systematic low-MW-matching miss, cause unconfirmed.** On the one
-  real image tested with the verified P7719 ladder, 9 of 10 sample lanes
-  found no band within tolerance of the 29.267 kDa target; the closest
-  misses clustered around ~24 kDa. Plausible explanation is calibration bias
-  from the 2 merged high-MW ladder points, but this hasn't been confirmed —
-  worth investigating (e.g. excluding anomalously wide/merged bands from the
-  calibration fit entirely, or widening tolerance, or testing against more
-  real images) before trusting real MW-matched results.
-- **Per-lane band-detection noise robustness is unresolved** — the
-  purely-relative prominence threshold (fraction of that lane's own max)
-  breaks down on very faint/low-signal lanes, producing dozens of spurious
-  "bands" from noise (98, observed). This is a distinct problem from the
-  ladder-lane calibration robustness work already done, and could currently
-  cause a false "mw-matched" result via coincidental noise rather than a
-  real detection — not yet mitigated.
+- **Dilution-detectability threshold skews purity at high dilution —
+  confirmed real, not yet mitigated.** As dilution increases, faint
+  contaminant bands drop below the detection floor before the target band
+  does, inflating apparent purity (observed in both `heuristic` and
+  `mw-matched` modes: 29% → 48% across one real dilution series). The user
+  confirmed this is an expected, real phenomenon (a fundamental limit-of-
+  detection effect, not primarily a tunable-parameter bug), so it shouldn't
+  be "fixed" by further threshold tuning alone. Needs a design decision:
+  e.g. flag low-total-signal lanes as lower-confidence, recommend/default to
+  the most-concentrated ("Total") lane as the authoritative measurement
+  rather than aggregating across the whole dilution series, or something
+  else — tracked as a new question for end users in `QUESTIONS_FOR_USERS.md`.
 
 ## Open Questions
 
