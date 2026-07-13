@@ -29,7 +29,8 @@ flowchart TD
     ActivityLabel["activity workflow<br/>Deferred — rule-based, not ML"]
     subgraph ActivityWF[" "]
         GridDet["96-well grid detection"]
-        ExpectedFrag["Expected fragment size(s)<br/>via substrate + ladder<br/>(NEBcutter tie-in)"]
+        Baseline["Compare each well vs its own<br/>Normalization-image baseline<br/>(primary — no digest-condition<br/>data needed from user)"]
+        ExpectedFrag["Optional future validation:<br/>expected fragment size(s)<br/>via substrate + ladder<br/>(NEBcutter tie-in, not required)"]
         Classify["Classify well:<br/>Active / Partial / Dead"]
         Heatmap["Well position × time heatmap"]
     end
@@ -46,4 +47,5 @@ flowchart TD
     LadderCal -- "no, heuristic allowed" --> Heuristic --> PurityCalc
     LadderCal -- "no, no flag given" --> ErrorOut
     PurityCalc --> PurityOut
-    GridDet --> ExpectedFrag --> Classify --> Heatmap
+    GridDet --> Baseline --> Classify --> Heatmap
+    Baseline -.-> ExpectedFrag -.-> Classify

@@ -154,13 +154,41 @@ without cause:
   needs a clear, complete description in the tool's own help output, not just
   in external docs. This applies from the first CLI implementation onward,
   not as a later polish pass.
+- **Purity input is CLI-flag-driven and fully self-contained (confirmed
+  2026-07-13).** No external lookups (e.g. a live Benchling API call) — the
+  user supplies `--target-mw` and `--ladder` (or `--ladder-bands` for an
+  unrecognized ladder) directly on the command line. Realistic burden in the
+  common case: 1-2 flags per run, both values the scientist already has to
+  know to interpret the gel by eye today, so this isn't new work for them —
+  just typed input instead of an inferred/looked-up value. Possible future
+  convenience (not yet decided — tracked in `QUESTIONS_FOR_USERS.md`):
+  defaulting `--ladder` to a common ladder (e.g. P7719) if it turns out to be
+  the de facto standard, dropping the common case to just `--target-mw`.
+- **Activity workflow classification will be baseline-relative, not
+  substrate-aware, for the core active/partial/dead call (decided
+  2026-07-13).** Every example experiment batch (both SfiI and TfiI) includes
+  its own "Normalization" image — a per-run baseline showing full activity
+  before any time-based decay. The core classifier will compare each well's
+  band pattern over time against that same well's own baseline from the
+  Normalization image, rather than requiring the substrate sequence or
+  expected absolute fragment size(s). This means **no digest-condition data
+  needs to be supplied by the user for the core classification** — it's
+  fully self-contained from the image batch alone, consistent with the
+  purity workflow's CLI-driven philosophy above. the reviewer's original ask
+  (accept a substrate sequence, cross-check against NEBcutter-predicted
+  fragment sizes) becomes an optional future validation layer, not a
+  requirement — revisit if baseline-relative comparison turns out to miss
+  real failure modes (tracked in `QUESTIONS_FOR_USERS.md`).
 
 ## Open Questions
 
-No open design questions remain as of this update (2026-07-13). The next
-things likely to surface are implementation-level details (e.g. tuning the
-MW-match tolerance against real example gels) rather than open architecture
-questions.
+No open internal design/architecture questions remain as of this update
+(2026-07-13). This section is for questions Jacob and Claude can resolve
+through design discussion alone. Questions that need an answer from the
+domain-expert end users (the submitter, the submitter, a team member, the reviewer, etc.) instead live in
+`QUESTIONS_FOR_USERS.md` — check there for the current accrued list before
+assuming a piece of domain knowledge (e.g. "is this ladder the standard one")
+rather than guessing.
 
 ## Data Inventory
 
@@ -171,9 +199,61 @@ questions.
 - `data/gia_data/project.md` — original proposal text for sub-project 2.
 - `data/gia_data/attachments/` — 22 raw 96-well gel scans (TIFF), 2 PDFs of the
   resulting heatmap plots, 2 `.txt` files with the target well-by-time
-  activity-score matrices.
+  activity-score matrices (SfiI enzyme).
+- `data/gia_data/attachments/TfiI/` — added 2026-07-13. A much larger activity
+  gel dataset for a different enzyme (TfiI), same 96-well-grid paradigm as
+  SfiI (confirmed by inspection — visible activity decay over time, dead
+  wells collapsing to a single band). Adds real complexity beyond SfiI:
+  - Four independent screen conditions (General, pH, ADD, CAPS Screen), each
+    with its own Normalization baseline + multi-timepoint time course.
+  - A `Validation/` subfolder that is **structurally different** — dose-
+    response by formulation/lot (4 quadrants × 2-fold dilution series), not a
+    96-well time-course grid. Will need its own parsing logic or explicit
+    scoping-out; not yet decided (see `QUESTIONS_FOR_USERS.md`).
+  - Every timepoint has a plain + `_unlabeled` image pair (identical pixel
+    content minus the burned-in well-number text/caption) — the unlabeled
+    version is likely preferable for automated segmentation.
+  - Per-image `.inf` sidecar files (AlphaImager instrument-export XML:
+    exposure, gain, binning, creation timestamp, etc.) — potentially useful
+    for cross-image normalization, though the samples checked so far show
+    identical default-looking values, so it's unconfirmed whether they vary
+    meaningfully in practice (see `QUESTIONS_FOR_USERS.md`).
+  - Data-quality anomalies noted (not fixed): 2 files with an unexpected
+    `.ory` extension (actually annotation-layer XML, not `.inf`-style
+    metadata), a stray `Thumbs.db`, an orphaned `Validation/a.tif`/`a.inf`
+    pair (appears to duplicate the Validation Normalization image), several
+    `_unlabeled` filename typos, and one oddly-sized TIFF in `Validation/`.
+- `data/decodeon_gel_images/Protein Purity/` — added 2026-07-13. 11 more
+  example purity gels (TIFF/JPG), same ladder + dilution-series layout as
+  `daria_data`. All 11 are the "no embedded standards" case (see Sub-project 1
+  above) — this batch adds volume/variety to that case but zero new examples
+  of the embedded-purity-standard-ladder case. Two images
+  (`260407_protein_purity.tif`, `4.16.26 Protein Purity.tif`) are notably
+  low-contrast/washed-out — flagged, not yet resolved whether that's typical
+  scan quality (see `QUESTIONS_FOR_USERS.md`). One
+  (`251017_..._FusionProtein.tif`) shows a doublet band with explicit
+  dilution-fold labels burned in — a useful edge case for band-matching logic.
+- `data/decodeon_gel_images/Titers/` — added 2026-07-13. 8 images that are a
+  **structurally distinct third category**, not a clean fit for either
+  existing workflow: inverted-contrast agarose gels showing a 2-fold enzyme
+  dilution series plus `+`/`-` control lanes, used to read a potency/dilution
+  endpoint (classic restriction-enzyme titer assay) rather than a purity % or
+  a per-well active/partial/dead state. Closer in spirit to the activity
+  workflow's core band-pattern problem than to purity, but a 1-D dilution
+  series rather than a plate grid. Whether this becomes a third workflow is
+  an open scope question — see `QUESTIONS_FOR_USERS.md`. One file
+  (`4.16.26 Concentrated Stock Titers.tif`) contains two stacked gel images
+  in a single file, worth noting for ingestion.
 - The `data/` directory is gitignored (see below) — it does not live in version
   control.
+
+## Questions for End Users
+
+`QUESTIONS_FOR_USERS.md` is a running list of functionality questions that
+need an answer from the domain-expert end users (the submitter, the submitter, a team member, the reviewer,
+etc.) rather than something resolvable through design discussion alone — the
+intent is to accrue these and ask them in a batch rather than one at a time.
+Add to it as new questions surface; don't resolve them by guessing.
 
 ## Working Agreements
 
@@ -189,6 +269,12 @@ questions.
   Decisions above), but implementation hasn't started. Don't start writing the
   actual pipeline code until that's explicitly requested — decisions being
   made doesn't imply a green light to implement.
+- **Document thoroughly enough to explain the whole system to non-implementing
+  stakeholders later.** Jacob needs to be able to walk the submitter/the submitter/a team member/
+  the reviewer through what was built and why at the end, not just hand them working
+  code. Every Design Decision entry should carry its rationale (the "why"), not
+  just the decision itself — this applies to future edits too, not only what's
+  already written.
 
 ## Architecture Diagram
 
@@ -203,11 +289,11 @@ discussed. Render with: `mmdc -i diagrams/program-flow.mmd -o diagrams/program-f
 
 When the user says **"update docs"**, **"update documentation"**, or anything
 clearly equivalent, treat it as shorthand for: refresh persistent memory,
-`AGENTS.md`, `README.md`, and the architecture diagram (both
-`diagrams/program-flow.mmd` and the re-rendered `diagrams/program-flow.png`)
-to reflect what's actually been decided/built since they were last updated.
-Re-render the PNG any time the `.mmd` changes — don't let them drift out of
-sync.
+`AGENTS.md`, `README.md`, `QUESTIONS_FOR_USERS.md`, and the architecture
+diagram (both `diagrams/program-flow.mmd` and the re-rendered
+`diagrams/program-flow.png`) to reflect what's actually been decided/built
+since they were last updated. Re-render the PNG any time the `.mmd` changes —
+don't let them drift out of sync.
 
 ## Repo Infrastructure Notes
 

@@ -24,16 +24,23 @@ problem — image in, calibrated quantitative/categorical result out:
   digest stability assay gel into active / partial / dead per time point, to
   drive a well-position × time heatmap instead of manual scoring.
 
-Both share a common image-processing core (lane/grid segmentation, ladder
-detection & calibration, band/peak detection); each has its own workflow and
-output on top of that core. Purity is being built first. See `AGENTS.md`'s
-"Design Decisions" section for the full reasoning.
+A possible **third category** — enzyme titer/potency assays (dilution-series
+agarose gels reading a potency endpoint) — was identified in newer example
+data but isn't scoped in yet; see `QUESTIONS_FOR_USERS.md`.
+
+Both existing workflows share a common image-processing core (lane/grid
+segmentation, ladder detection & calibration, band/peak detection); each has
+its own workflow and output on top of that core. Purity is being built first.
+See `AGENTS.md`'s "Design Decisions" section for the full reasoning.
 
 For purity specifically, target-band identification is MW-based by default
 (ladder calibrated via a known lookup table or a `--ladder-bands` override);
 if the ladder can't be calibrated, the tool refuses to guess unless
-`--allow-heuristic` is explicitly passed. See `AGENTS.md` for the full
-rationale.
+`--allow-heuristic` is explicitly passed. For activity, the plan is to
+classify each well against its own baseline (Normalization) image rather than
+requiring substrate/digest-condition data up front — both choices keep the
+tool fully self-contained and CLI-driven, with no external lookups required.
+See `AGENTS.md` for the full rationale.
 
 ## Development
 
@@ -44,3 +51,6 @@ rationale.
   end users of this tool aren't expected to be CLI-comfortable.
 - No git actions (commit/push) happen without explicit user consent — see
   `AGENTS.md`'s "Working Agreements".
+- Open questions that need a domain expert's input (not just an engineering
+  call) are tracked in `QUESTIONS_FOR_USERS.md`, to be asked in a batch rather
+  than piecemeal.
