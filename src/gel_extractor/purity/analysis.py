@@ -78,6 +78,7 @@ class LaneDebugInfo:
     is_ladder: bool
     bands: list[Band]
     target_bands: list[Band]  # subset of `bands` counted as the target/matched signal
+    track: TracedLane  # this lane's traced curve -- see purity.debug_viz for how it's drawn
 
 
 @dataclass(frozen=True)
@@ -205,6 +206,7 @@ def analyze_image(
                 is_ladder=False,
                 bands=bands,
                 target_bands=target_bands,
+                track=track,
             )
         )
 
@@ -223,6 +225,7 @@ def analyze_image(
                 is_ladder=True,
                 bands=ladder_bands_detected,
                 target_bands=[],
+                track=ladder_track,
             ),
             *lane_debug_info,
         ],

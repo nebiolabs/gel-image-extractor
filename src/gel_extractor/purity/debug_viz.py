@@ -19,6 +19,7 @@ OTHER_BAND_COLOR = (230, 50, 50)
 CROP_BOUND_COLOR = (180, 0, 220)
 LABEL_TEXT_COLOR = (255, 255, 255)
 LABEL_BG_COLOR = (0, 0, 0)
+CURVE_TRACE_COLOR = (255, 140, 0)  # this branch only -- see core.curve_lanes; kept distinct from red/green band colors
 
 
 def render_debug_image(
@@ -46,8 +47,11 @@ def render_debug_image(
 
     Color key: blue = ladder lane, amber = sample lane, magenta = adaptive
     crop boundary, green = band counted as the target/matched signal, red =
-    other/contaminant band. A sample lane with no matched band
-    ("not-found") shows all its bands in red.
+    other/contaminant band, **orange = this lane's traced curve** (this
+    branch only -- see `core.curve_lanes`; the straight amber/blue box is
+    still drawn alongside it for comparison, since band intensity was
+    actually summed along the curve, not the straight box). A sample lane
+    with no matched band ("not-found") shows all its bands in red.
     """
     normalized = image.astype(np.float64) - image.min()
     peak = normalized.max()
@@ -69,6 +73,7 @@ def render_debug_image(
             fill=CROP_BOUND_COLOR,
             width=1,
         )
+        _draw_traced_curve(draw, lane_info.track, lane_info.top_bound, lane_info.bottom_bound)
 
         target_band_ids = {id(b) for b in lane_info.target_bands}
         for band in lane_info.bands:
@@ -86,6 +91,18 @@ def render_debug_image(
     _draw_ladder_calibration(draw, debug_info)
 
     return canvas
+
+
+def _draw_traced_curve(draw: ImageDraw.ImageDraw, track, top_bound: int, bottom_bound: int) -> None:
+    """Draw one lane's traced curve (this branch only, see `core.curve_lanes`).
+
+    Sampled every few rows rather than every row -- plenty smooth for a
+    visual check, and much cheaper than one `line()` call per row.
+    """
+    step = max(1, (bottom_bound - top_bound) // 100)
+    points = [(track.x_at_row(row), row) for row in range(top_bound, bottom_bound, step)]
+    if len(points) >= 2:
+        draw.line(points, fill=CURVE_TRACE_COLOR, width=2)
 
 
 def _lane_label(lane_info, results_by_lane: dict[int, LaneResult]) -> str:
