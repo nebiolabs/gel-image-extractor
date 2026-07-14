@@ -72,6 +72,51 @@ tracing concept, not to be a correct multi-object tracker. A real
 implementation would need proper track birth/death/merge/split logic (e.g.
 a Hungarian-assignment or Kalman-filter based multi-object tracker) before
 this could replace `core.lanes` in production.
+
+## Findings from real-image testing (2026-07-14) -- honest, mixed result
+
+Tested via `scripts/curve_trace_demo.py` against 3 real images (rendered
+comparisons saved to `curve_trace_output/`, committed alongside this
+module):
+
+- `8.6.25 Protein Purity.tif` (a relatively well-behaved gel): traced curves
+  look *good* -- they visibly converge into each comb tooth at the top the
+  way the real wells do, track smoothly down through a real mid-gel darkened
+  region, and subjectively track true lane centerlines at least as well as
+  the straight rectangles, arguably better near the top where lanes visibly
+  aren't vertical.
+- `251017_ProteinPurity_FusionProtein.tif` (a dilution series, 1x-128x):
+  mostly good and smooth, but 2 of ~13 real lanes show a visible track
+  jumping to an adjacent lane's candidate partway down (an "X" or "V" shape
+  in the rendered image) -- this is *exactly* the documented no-split/merge
+  limitation showing up on a real image, not a hypothetical.
+- `R-236_PDEV1452_91pct_53.53519kDa.png` (the worst known over-segmentation
+  case): still messy. Curved tracking produces roughly 2x as many tracks as
+  real lanes (e.g. 27 traced tracks vs. 14 straight-rectangle lanes even
+  after tuning down from this module's original defaults), with visible
+  duplicate/crossing tracks per real lane. Per-strip independent detection
+  turned out to be *noisier* than whole-image column projection (less
+  height to average over), so greedy no-merge tracking amplifies rather
+  than resolves this image's over-segmentation problem.
+
+Net verdict: curve tracing is a real, visible improvement on a well-behaved
+gel, but does **not** clearly solve the over-segmentation problem that
+motivated this prototype in the first place, on the specific image where
+that problem was worst. The likely reason (see findings above) is that
+per-strip lane *detection from scratch* is fragile on a narrow vertical
+slice; the strip-tracking idea (nearest-centroid across strips) itself
+looked reasonable and worth keeping.
+
+Recommended next step if this is picked up again: don't re-detect lane
+candidates independently in each strip. Instead, detect lanes once on the
+whole image (the existing, more-robust `core.lanes.detect_lanes`) to fix
+the lane *count* and rough starting positions, then only trace each
+already-identified lane's local curvature strip-by-strip within a narrow
+search window around its whole-image position. That constrains the
+per-strip search enough to avoid spawning spurious tracks from noise,
+while still capturing real curvature -- likely a better combination than
+either fully-independent per-strip detection (this prototype) or a single
+rigid rectangle (the current production approach).
 """
 
 from dataclasses import dataclass, field
@@ -81,20 +126,28 @@ import numpy as np
 from gel_extractor.core.lanes import detect_lanes
 
 # Number of horizontal strips to slice the image into for per-strip lane
-# detection. A prototype-stage guess, not empirically tuned: enough strips
-# to resolve real curvature (gel smiling is a gradual effect over the whole
-# height) without each strip being so short that column-projection noise
-# dominates over real signal. See this module's docstring for context.
-DEFAULT_NUM_STRIPS = 16
+# detection. Originally guessed at 16 (more strips = finer curvature
+# resolution); empirical testing against real images (see "Findings" in
+# this module's docstring, 2026-07-14) found *fewer*, wider strips actually
+# produced less spurious track fragmentation -- each strip's column
+# projection is noisier than the whole-image version it's derived from
+# (less height to average over), so more/narrower strips means more noisy,
+# independent redetections and more chances to spawn a spurious extra
+# track. Still not a rigorously tuned value, just the better of a small
+# number tried (8, 16, 24 strips).
+DEFAULT_NUM_STRIPS = 8
 
 # Maximum allowed centroid jump between adjacent strips, as a fraction of
 # image width, before a strip-to-strip match is rejected as implausible.
 # Real gel smiling drifts a lane by a small fraction of the image width over
 # its *entire* height; per-strip, the drift should be much smaller than
-# that. Set generously loose for a prototype -- better to occasionally
-# accept a bad match than to fragment tracks unnecessarily, since split/merge
-# handling is explicitly out of scope (see docstring).
-DEFAULT_MAX_JUMP_FRACTION = 0.06
+# that. Originally set loose (0.06) on the theory that accepting an
+# occasional bad match beats fragmenting tracks -- empirical testing found
+# the opposite: a tighter value (0.02) rejected more implausible matches
+# and modestly reduced spurious track counts on real images without
+# visibly breaking legitimate curvature tracking (see docstring
+# "Findings").
+DEFAULT_MAX_JUMP_FRACTION = 0.02
 
 
 @dataclass(frozen=True)
