@@ -36,6 +36,50 @@ def test_detect_lanes_discards_narrow_noise():
     assert lanes[0].x_start < 15
 
 
+def test_detect_lanes_merges_narrow_fragments_of_one_faded_lane():
+    # Several real, well-resolved lanes (width ~40, most of a typical real
+    # gel's detected runs -- needed so the width-percentile reference
+    # reflects "normal lane width," not get dragged down by the very
+    # slivers being tested) plus a cluster of narrow slivers (width ~7-8
+    # each) packed into about one lane-width's worth of space -- the
+    # fragmentation pattern from a real lane fading toward background (see
+    # AGENTS.md Implementation Status, 2026-07-14). Gaps between the slivers
+    # (15-20px, comfortably wider than min_gap_width after smoothing) mean
+    # mechanism A alone can't bridge them -- only the fragment-merge step
+    # (mechanism B) should.
+    signal = np.zeros((50, 400))
+    signal[:, 10:50] = 1.0
+    signal[:, 200:240] = 1.0
+    signal[:, 350:390] = 1.0
+    signal[:, 100:107] = 0.3
+    signal[:, 122:130] = 0.3
+    signal[:, 145:152] = 0.3
+
+    lanes = detect_lanes(signal, smoothing_sigma=0.5, threshold_fraction=0.1)
+
+    assert len(lanes) == 4
+    fragment_lane = lanes[1]
+    assert fragment_lane.x_start <= 100 and fragment_lane.x_end >= 152
+
+
+def test_detect_lanes_does_not_merge_two_normal_width_lanes():
+    # Regression guard (2026-07-14): an earlier version of the fragment-merge
+    # fix merged two genuinely separate, normal-width lanes together just
+    # because they sat close together and the combined width still looked
+    # "reasonable" -- caught on a real image where this merged the ladder
+    # lane into the first sample lane. Two lanes of comparable width to each
+    # other must stay separate even with a modest gap between them (still
+    # comfortably wider than min_gap_width after smoothing, so mechanism A
+    # doesn't confound this -- it's mechanism B being tested here).
+    signal = np.zeros((50, 300))
+    signal[:, 10:50] = 1.0  # width 40
+    signal[:, 70:110] = 1.0  # width 40, 20px gap from the first
+
+    lanes = detect_lanes(signal, smoothing_sigma=0.5)
+
+    assert len(lanes) == 2
+
+
 def test_detect_comb_fringe_end_finds_elevated_variability_region():
     from gel_extractor.core.lanes import detect_comb_fringe_end
 

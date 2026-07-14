@@ -84,7 +84,8 @@ without cause:
   (image I/O, ladder detection/calibration, lane/grid segmentation, band/peak
   detection) and two thin, independent workflow modules on top — `purity` and
   `activity` — rather than two separate repos or one forced single pipeline.
-  Actual layout (as implemented):
+  Planned layout (`activity/` not yet created -- only `core/` and `purity/`
+  exist on disk today):
   ```
   src/gel_extractor/
     core/       # shared image-processing primitives
@@ -108,6 +109,20 @@ without cause:
   settings — likely tens of thousands of independently-varying labeled wells,
   a couple of orders of magnitude beyond what exists today. Revisit if/when
   NEB accumulates that kind of labeled data as a byproduct of normal QC work.
+  **Reconfirmed 2026-07-14** for the purity workflow's own lane-detection
+  problem too, prompted by the user asking directly whether an ML approach
+  could work here instead of classical CV: same conclusion, for the same
+  reason — ~17 real images, only 7 with a confirmed purity number, and *zero*
+  with pixel/lane-boundary ground truth (the `--debug` boxes are the
+  algorithm's own guesses, not training labels). Not enough data to train a
+  segmentation model without a real data-collection effort first; a
+  from-scratch model would very likely overfit and underperform the existing
+  heuristic pipeline. A pretrained general-purpose segmentation model
+  (e.g. Segment Anything) used as a component is a more realistic *future*
+  angle than training from scratch, but still needs more ground truth to
+  validate against and wasn't pursued given the MVP timeline — see the
+  curve-tracing prototype entry in Implementation Status for what *was*
+  pursued instead.
 - **Interface: CLI for now**, structured so a UI can be layered on top later
   without a rework (i.e. keep core logic decoupled from any CLI-specific
   concerns).
@@ -142,70 +157,54 @@ without cause:
   - Primary method: calibrate the ladder lane (known NEB ladder lookup table,
     e.g. P7719, or a user-supplied `--ladder-bands` override), then identify
     the target band as whichever detected band falls nearest the protein's
-    known expected MW, within a tolerance (placeholder: ±15-20% of expected
-    MW — approximate on purpose, to be tuned empirically against the example
-    gels once real code exists, not decided precisely up front).
-  - **Ladder calibration relaxed to best-effort subset matching (revised
-    2026-07-13, superseding the original "exact band count match" rule
-    below).** Requiring every known ladder band to be individually detected
-    turned out to be a much higher precision bar than real practice needs —
-    a bench scientist anchors off whichever 1-2 nearby rungs are visible, not
-    a full curve through every rung. It was also unworkable in practice: it
-    failed on every real image tried, for two different reasons (some bands
-    genuinely merge at the high-MW end due to SDS-PAGE's log-linear
-    migration — a well-known, near-universal compression artifact, not
-    randomness; other images over-detect noise as extra "bands").
-  - **Which known bands are "missing" is determined empirically, not
-    assumed (revised again, same day, after further real testing).** The
-    first version of this fix always assumed any undetected bands were the
-    highest-MW ones (physically reasonable — that's where SDS-PAGE resolves
-    worst). Real testing found a case where the *opposite* alignment fit
-    meaningfully better (R² 0.95 vs. 0.89) and was independently corroborated
-    by where the dominant band actually sat in a real sample lane — so a
-    fixed directional assumption is itself a real source of error. Current
-    rule: try every contiguous subset of the known ladder sizes that matches
-    the detected band count, fit each, and keep whichever fits best. If more
-    bands are detected than known sizes (likely noise), keep only the most
-    prominent ones by area before this search. Guardrails so this doesn't
-    silently miscalibrate: requires at least 3 matched bands, and rejects
-    even the best-fitting alignment if its R² is below 0.85 (loosened from
-    an initial 0.9 after confirming a real ~0.89-0.95-R² fit still correctly
-    located a real target band; see Implementation Status).
-  - **If the ladder still can't be calibrated** (too few bands detected, or
-    fit quality too poor even with the relaxed matching above), the tool
-    refuses to process by default (hard error) rather than silently
-    degrading to a less reliable method.
+    known expected MW, within a tolerance (**20%**, moved up from an initial
+    17.5% midpoint once real testing showed a true target band sitting ~19%
+    off the calibrated MW — see Implementation Status).
+  - **Ladder calibration is best-effort subset matching, not an exact-match
+    requirement.** Requiring every known ladder band to be individually
+    detected is a much higher precision bar than real practice needs — a
+    bench scientist anchors off whichever 1-2 nearby rungs are visible, not a
+    full curve through every rung. It also failed on every real image tried
+    for two reasons: some high-MW bands genuinely merge (SDS-PAGE's
+    log-linear migration, a known compression artifact, not randomness), and
+    some images over-detect noise as extra "bands." Current rule: try every
+    contiguous subset of the known ladder sizes that matches the detected
+    band count, fit each, keep whichever fits best (real testing found the
+    "assume missing bands are the highest-MW ones" shortcut is itself wrong
+    on some images — don't assume a direction, always search). Guardrails:
+    requires ≥3 matched bands and rejects the best-fitting alignment if its
+    R² is below 0.85.
+  - **If the ladder still can't be calibrated**, the tool refuses to process
+    by default (hard error) rather than silently degrading.
   - **`--allow-heuristic` is an explicit, non-default escape hatch.** It never
     triggers automatically. When passed, it permits falling back to a
     largest/darkest-band heuristic so the user can still get *some* number out
     when calibration isn't possible, but the result must be clearly flagged as
-    lower-confidence in the output (e.g. a `confidence: heuristic` vs.
-    `confidence: mw-matched` field) — never presented as equivalent to an
+    lower-confidence in the output (`confidence: heuristic` vs.
+    `confidence: mw-matched`) — never presented as equivalent to an
     MW-matched result.
   - Embedded purity-standard lanes (50/75/88/94/97/98/99%, when present in a
     gel like the EcoRI-HF/BtgZI QC reports) are an optional secondary
     validation check against the computed number, not required for and not
     part of the core calibration — exact mechanism for using them is a future
-    detail, not blocking for MVP.
+    detail, not blocking for MVP. **Confirmed 2026-07-14 as a non-issue for
+    now**: the user's team doesn't typically produce gels in this format —
+    plain ladder + dilution series is the real-world norm.
 - **CLI usability requirement: flags must be clearly self-documented in
   `--help`.** Since end users aren't CLI-comfortable (per discussion), every
-  flag — `--lane`, `--ladder-bands`, `--allow-heuristic`, and any added later —
-  needs a clear, complete description in the tool's own help output, not just
-  in external docs. This applies from the first CLI implementation onward,
-  not as a later polish pass.
+  flag needs a clear, complete description in the tool's own help output, not
+  just in external docs. This applies from the first CLI implementation
+  onward, not as a later polish pass.
 - **Purity input is CLI-flag-driven and fully self-contained (confirmed
   2026-07-13).** No external lookups (e.g. a live Benchling API call) — the
   user supplies `--target-mw` and `--ladder` (or `--ladder-bands` for an
-  unrecognized ladder) directly on the command line. Realistic burden in the
-  common case: 1-2 flags per run, both values the scientist already has to
-  know to interpret the gel by eye today, so this isn't new work for them —
-  just typed input instead of an inferred/looked-up value. **Answered
-  2026-07-14, closing the "default --ladder" idea above**: ladder choice
-  genuinely varies by team/scientist (at least 2 in use within the user's
-  own group) — there's no single de facto standard to default to. The user's
-  team is open to standardizing internally, but which ladder is a separate,
-  still-pending decision. Keep `--ladder`/`--ladder-bands` as an explicit,
-  required-ish input rather than adding a silent default.
+  unrecognized ladder) directly on the command line. **Answered 2026-07-14,
+  closing the "maybe default `--ladder`" idea originally floated**: ladder
+  choice genuinely varies by team/scientist (at least 2 in use within the
+  user's own group) — there's no single de facto standard to default to. The
+  user's team is open to standardizing internally, but which ladder is a
+  separate, still-pending decision. Keep `--ladder`/`--ladder-bands` explicit
+  rather than adding a silent default.
 - **Activity workflow classification will be baseline-relative, not
   substrate-aware, for the core active/partial/dead call (decided
   2026-07-13).** Every example experiment batch (both SfiI and TfiI) includes
@@ -224,15 +223,12 @@ without cause:
 - **Tech stack (decided 2026-07-13):** Python 3.11+; `numpy` + `scipy` +
   `scikit-image` for image processing (lighter/more idiomatic than OpenCV for
   this scale; OpenCV is worth reconsidering specifically for the activity
-  workflow's 96-well grid/circle detection later, since its Hough-circle/
-  contour tooling is more mature for that particular problem — not a purity
-  concern); `argparse` for the CLI, not `typer` — typer's auto-generated
-  `--help` is nicer, but doesn't outweigh Jacob's existing familiarity with
-  argparse, so we're using argparse with a deliberate commitment to writing
-  complete `help=` text for every flag to still meet the CLI-usability
-  requirement above; `pyproject.toml` + `uv` for packaging/dependency
-  management (chosen over conda since our whole stack is available as PyPI
-  wheels and doesn't need conda's non-Python binary management); `pytest` for
+  workflow's 96-well grid/circle detection later, not a purity concern);
+  `argparse` for the CLI (Jacob's existing familiarity outweighs `typer`'s
+  nicer auto-`--help`, with a deliberate commitment to writing complete
+  `help=` text for every flag to still meet the CLI-usability requirement
+  above); `pyproject.toml` + `uv` for packaging (our stack is fully available
+  as PyPI wheels, no need for conda's binary management); `pytest` for
   testing.
 - **One CLI entry point with subcommands (confirmed 2026-07-13)**, not
   separate binaries per workflow — e.g. `gelx purity analyze gel.tif`,
@@ -243,492 +239,313 @@ without cause:
   stdout by default. `--csv [PATH]`: if a path is given, writes a CSV file
   there (table still also prints to stdout); if no path is given, prints CSV
   to stdout *instead of* the table, so it stays pipeable. `--json [PATH]`
-  works the same way. Both flags can be combined (e.g. write both a CSV and a
-  JSON file in one run); using both bare (no path) at once is the one
-  disallowed combination, since they'd both want stdout. Shared column/field
-  set across all three formats: `lane` (index among sample lanes — the
-  ladder lane is excluded from result rows, but which lane was used as the
-  ladder is noted once, e.g. a header line above the table or a top-level
-  JSON field), `purity_percent`, `confidence` (`mw-matched` / `heuristic`),
-  `target_mw_expected`, `matched_band_mw`.
+  works the same way. Both flags can be combined; using both bare (no path)
+  at once is the one disallowed combination, since they'd both want stdout.
+  Shared column/field set: `lane`, `purity_percent`, `confidence`
+  (`mw-matched` / `heuristic` / `not-found`), `target_mw_expected`,
+  `matched_band_mw`, `low_signal` (added 2026-07-14, see Implementation
+  Status).
 - **Target-band edge cases resolved (2026-07-13):**
   - **Doublets/multiple bands within MW tolerance:** sum all bands that fall
     within the tolerance window as the target signal, rather than picking
-    only the single nearest band — more scientifically defensible (often
-    legitimately the same protein in two forms), and directly motivated by
-    the observed doublet in `251017_..._FusionProtein.tif`.
+    only the single nearest band — more scientifically defensible, and
+    directly motivated by an observed real doublet.
   - **Which detected lane is the ladder:** default to the leftmost detected
     lane (true in every example seen so far), with an override flag for the
-    rare exception. This is a real assumption from a small sample size, not
-    a robust detection — worth revisiting if it misfires on real data.
-  - **Lane vertical bounds (the "total lane area" denominator):** crop starts
-    just below the loading well (excluding well/aggregate smear) through the
-    dye front. Proposed on paper; needs visual validation against real gels
-    once code exists, not just a decision on paper.
+    rare exception.
+  - **Lane vertical bounds:** crop starts just below the loading well through
+    the dye front — implemented as an adaptive (not fixed-fraction) crop, see
+    Implementation Status.
 - **Validation strategy (decided 2026-07-13): no external numeric ground
-  truth exists** for any example gel (the closest is "EcoRI-HF is >95% pure,"
-  a threshold, not an exact value) — confirmed there's no better source
-  available right now. Primary correctness signal instead: **a dilution
-  series of the same sample should yield roughly the same purity % across
-  all dilution lanes**, since diluting shouldn't change purity, only total
-  signal. This is the bar implementation should be validated against absent
-  real ground truth.
+  truth exists** for most example gels (the closest early on was "EcoRI-HF is
+  &gt;95% pure," a threshold, not an exact value). Primary correctness signal:
+  **a dilution series of the same sample should yield roughly the same
+  purity % across all dilution lanes**, since diluting shouldn't change
+  purity, only total signal — encoded as an automated test. (Real confirmed
+  ground-truth purity numbers were later obtained for 6 more images on
+  2026-07-14 — see Data Inventory's `pptx_tet3_gels` entry — but this
+  dilution-consistency check remains the primary automated signal.)
 - **Modular, swappable architecture (decided 2026-07-13) — explicit
-  requirement, not just good practice, because several decisions above
-  (baseline correction method, MW tolerance value, the leftmost-lane
-  heuristic, doublet-summing logic) are expected to change once we're
-  looking at real output instead of paper decisions.** Concretely:
+  requirement, since several decisions above were expected to change once
+  real output was in hand.**
   - **Pipeline of discrete stages**, not one monolithic function: image →
     intensity profile → baseline-corrected profile → detected bands →
-    identified target band(s) → purity % → formatted output. Each stage is
-    its own function with a clear input/output contract.
-  - **Pluggable algorithms behind a common interface (strategy pattern)** for
-    pieces expected to be revised: baseline correction
-    (`correct_baseline(profile) -> profile`), band/peak detection, and
-    ladder-lane identification — swapping the underlying method should not
-    require changing calling code.
-  - **A structured internal result object** (e.g. a `LaneResult` dataclass)
-    rather than raw dicts/tuples threaded through the code. Table/CSV/JSON
-    output are three independent formatter functions that all read from the
-    same result object — adding a fourth format later means writing one new
-    formatter, not touching core logic.
-  - **Centralized, named configuration for tunable values** (MW tolerance %,
-    etc.) instead of magic numbers scattered through the code, so tuning them
-    later is a one-line change.
+    identified target band(s) → purity % → formatted output.
+  - **Pluggable algorithms behind a common interface** for pieces expected to
+    be revised: baseline correction, band/peak detection, ladder-lane
+    identification.
+  - **A structured internal result object** (`LaneResult`) rather than raw
+    dicts/tuples. Table/CSV/JSON output are independent formatters that all
+    read from the same result object.
+  - **Centralized, named configuration for tunable values**, not magic
+    numbers scattered through the code.
 - **Robust testing is a project requirement, not optional polish (decided
-  2026-07-13).** The modular pipeline-of-stages architecture above exists
-  partly *to make this practical* — each stage (baseline correction, band
-  detection, target identification, output formatting) should have its own
-  unit tests, plus integration tests running the full pipeline against the
-  real example gel images in `data/`. The dilution-series self-consistency
-  check above (same sample, same purity % across dilutions) should be
-  encoded as an actual automated test, not just an informal sanity check —
-  it's our main correctness signal given the lack of external ground truth.
+  2026-07-13).** Every pipeline stage has unit tests, plus integration tests
+  against real example gel images, plus the dilution-series self-consistency
+  check as an actual automated test — the main correctness signal given the
+  lack of external ground truth for most images.
 
 ## Implementation Status
 
-The purity workflow is implemented and passing its test suite (built the
-same day design finished, so no date-of-completion note beyond "2026-07-13").
+**Current state (2026-07-14): purity workflow implemented and tested, 51
+tests passing.** Package layout: `src/gel_extractor/{core,purity}/`
+(src-layout), entry point `gelx` (`gelx purity analyze <image> --target-mw
+KDA [...]`). Run via `uv run gelx ...`; tests via `uv run pytest`. Test suite
+composition: unit tests per `core` module (synthetic, deterministic data),
+end-to-end pipeline tests via synthetic gel images, CLI tests (table/CSV/
+JSON/error paths), and integration tests against real example gel images
+including the dilution-series self-consistency check.
 
-- **Package layout:** `src/gel_extractor/{core,purity}/` (src-layout),
-  entry point `gelx` (`gelx purity analyze <image> --target-mw KDA [...]`).
-  Run via `uv run gelx ...`; tests via `uv run pytest`.
-- **Test suite:** 36 tests passing — unit tests per `core` module (synthetic,
-  deterministic data), an end-to-end pipeline test via a synthetic gel image
-  file, CLI tests (table/CSV/JSON/error paths), and integration tests
-  against a real example gel image, including the dilution-series
-  self-consistency check.
-- **Reporting precision fixed:** `purity_percent` now rounds to the nearest
-  whole percent (was 1 decimal place — see the former Known Limitations
-  entry, now resolved). `matched_band_mw` is unaffected (a different,
-  separately-imprecise measurement, not part of this fix).
-- **`KNOWN_LADDERS["P7719"]` is now seeded and verified** (`core/ladder.py`)
-  — `[250, 180, 130, 95, 72, 55, 43, 34, 26, 17, 10]` kDa. Verified against
-  NEB's own labeled product gel image for P7719 (user-provided), which
-  matches everything independently found via web research (11 bands total;
-  orange reference band at 72 kDa, green at 26 kDa; range 10-250 kDa) — text
-  sources alone couldn't confirm the individual band list, but the labeled
-  image resolved it. `--ladder P7719` now works as a real named option, not
-  just a placeholder.
-- **`KNOWN_LADDERS["P7717"]` seeded and verified (2026-07-14)**, the same way
-  — `[200, 150, 100, 85, 70, 60, 50, 40, 30, 25, 20, 15, 10]` kDa, 13 bands,
-  read directly off NEB's own labeled product gel image (user-provided). This
-  came up because `260612_ProteinPurity.tif`'s ladder is confirmed as P7717,
-  not P7719 — see Data Inventory. Ran the real image through
-  `gelx purity analyze --ladder P7717 --target-mw 202.49188`: all 4 sample
-  lanes calibrate (`mw-matched`), matched MWs land 167-180 kDa vs. the
-  confirmed 202.5 kDa target — inside the 20% tolerance (so it matches), but
-  a real, useful accuracy data point, not a clean validation win.
-- **`--help` gotcha fixed:** argparse only expands `%%` → `%` in per-argument
-  `help=` text, not in a parser's `description=` — a literal `%%` was
-  showing up in `gelx purity analyze --help` until this was caught by
-  actually reading the rendered output, not just the source.
+Below is a condensed history of what was built, found, and fixed, newest
+first-in-each-topic. Older entries have been trimmed of superseded
+blow-by-blow numeric detail (exact intermediate test counts, per-attempt
+percentages) — the full detail is in git history if ever needed again; what's
+kept here is every decision, root cause, and "don't retry X" warning.
 
-### Real findings from running this against real data
+- **Ladders seeded and verified**: `KNOWN_LADDERS["P7719"]` (`core/ladder.py`)
+  — `[250, 180, 130, 95, 72, 55, 43, 34, 26, 17, 10]` kDa, verified against
+  NEB's own labeled P7719 product image. `KNOWN_LADDERS["P7717"]` (2026-07-14)
+  — `[200, 150, 100, 85, 70, 60, 50, 40, 30, 25, 20, 15, 10]` kDa, same way.
+  Real validation: `260612_ProteinPurity.tif` (confirmed P7717, target 202.49
+  kDa) calibrates on all 4 sample lanes, matched MWs land 167-180 kDa —
+  inside the 20% tolerance, a real accuracy data point, not a clean win.
+- **Real findings from running this against real data** (non-obvious,
+  expensive to rediscover):
+  - `data/daria_data/attachments/*.png` are Benchling attachment-viewer
+    *screenshots* (UI chrome included), not clean gel photos — confirmed by
+    matching one to its clean original in `data/decodeon_gel_images/Protein
+    Purity/`. Use the `decodeon_gel_images` versions for any real pipeline
+    testing.
+  - Real gel photos aren't on a white background — initial lane detection
+    (threshold against the column-sum profile's absolute peak) failed by
+    finding one giant "lane" spanning the whole gel rectangle. Fixed by
+    baseline-correcting the column profile first, reusing the same
+    rolling-baseline function already built for band detection.
+  - Tuned starting values (still placeholders, now concrete in code):
+    lane-detection threshold fraction 0.03, baseline rolling-window 51px,
+    MW tolerance 20%, ladder-calibration minimum 3 matched bands / R²≥0.85,
+    band-detection noise floor 10× estimated point-to-point noise (5× for
+    the ladder lane specifically — a stricter floor there wrongly filtered
+    out 3/11 real low-contrast-but-real ladder lanes; sample-lane detection
+    keeps the stricter default since it has no downstream guardrail against
+    a false positive).
+  - A per-lane `not-found` state was added for when the ladder calibrates
+    fine but one specific lane's target band isn't found within tolerance
+    (`confidence: not-found`, `purity_percent: null`, doesn't abort the rest
+    of the run) — an extension of the original design, not a contradiction.
+  - The `--allow-heuristic` fallback has a real, understood bias: on a real
+    dilution series, fainter lanes lose their faint contaminant bands below
+    the detection threshold first, inflating apparent purity as dilution
+    increases. This is why the dilution-series self-consistency test uses a
+    loose bound, and is the same root phenomenon as the dilution-
+    detectability limitation below.
+  - Ladder calibration against real P7719 data (HpyCH4IV) initially found two
+    separate real bugs, both fixed: (1) a noisy sample lane produced 98
+    "detected bands" — fixed via the noise-floor gate above; (2) no band
+    matched the target MW at all — root-caused as the calibration
+    direction-assumption problem (fixed by trying every contiguous subset
+    rather than assuming which bands are "missing") plus widening MW
+    tolerance to 20%. After both fixes: 8/10 real sample lanes matched
+    consistently (34.6-34.9 kDa).
+  - Broader sweep across all 11 `decodeon_gel_images/Protein Purity/` images
+    found 3 more genuinely-real-but-low-contrast ladder lanes being wrongly
+    rejected by the noise floor — fixed with the more lenient 5× ladder-lane
+    floor above. Result: 10/11 images calibrate (R² 0.89-0.98). **Important
+    scope caveat**: this only validates calibration *machinery* — at the
+    time, only HpyCH4IV had both a clean file and an independently confirmed
+    target MW to validate full accuracy against (this has since improved —
+    see the `pptx_tet3_gels` entry in Data Inventory, 7 images now have
+    confirmed ground truth).
+  - **Dilution-detectability threshold confirmed real** (not just suspected):
+    matched purity trends upward with dilution (29%→48% across one series).
+    User confirmed this is an expected, fundamental limit-of-detection
+    effect (faint contaminant bands become undetectable before the target
+    band does), not a tunable-parameter bug — see the dedicated Known
+    Limitations entry and the `low_signal` flag below for how it was
+    addressed.
+  - **Real end-to-end accuracy test against 5 newly-confirmed MWs
+    (2026-07-13, Esp3I/IdeS Protease/TelA/TET3-R-218/CL_ASR29 — see Data
+    Inventory) found real failures, not a validation win**: TelA's ladder
+    fails to calibrate at all (genuinely low-contrast scan); the fusion-
+    protein image (`251017_..._FusionProtein.tif`) returns "not-found" for
+    every lane despite a good ladder R², root-caused to lane over-detection
+    (13 lanes found where the image visually has 9); Esp3I/IdeS/CL_ASR29 all
+    calibrate but show purity swinging inconsistently across a dilution
+    series, a different failure mode than the smooth dilution-detectability
+    drift, not root-caused; only `10.31.25 PDEV1437.tif` (the other TET3/
+    R-218 lot) gave a clean, consistent result. Net: real per-image accuracy
+    is worse than the single-image (HpyCH4IV) validation suggested — this
+    motivated the lane over-segmentation investigation below.
 
-These surfaced only once real images hit real code — recorded here because
-they're non-obvious and expensive to rediscover:
+- **Lane over-segmentation — the project's longest-running open problem,
+  multiple attempts across 2026-07-13/14, partially resolved.** Root
+  mechanism: `detect_lanes` collapses the *entire image height* into one
+  column-sum profile before any lane boundary exists, with no row-by-row
+  awareness — so it can't handle gel smiling (lanes curving as they migrate)
+  or bleed-over between adjacent overloaded wells, and (until fixed) badly
+  fragmented single fading lanes into multiple pieces.
+  - **Attempt 1 (2026-07-13), row-banding + majority vote — confirmed dead
+    end, do not retry.** Assumed a real lane runs the gel's full height so
+    should get majority support across sub-bands, while a localized artifact
+    wouldn't. Backwards: the suspect region turned out to be the gel slab's
+    own physical edge (which, being a literal boundary, spans the *entire*
+    height), while a real lane's band was vertically localized and lost the
+    vote. Reverted.
+  - **Attempt 2 (2026-07-13), explicit gel-edge trimming — promising
+    direction, unresolved regression, never re-attempted.** Classified each
+    column as background vs. interior gel via nearest-centroid distance from
+    a border-sampled reference (direction-agnostic, verified against an
+    inverted-contrast activity-gel image too). Fixed calibration on 10/11
+    images (including TelA) and reduced lane over-counts substantially, but
+    caused a real regression on HpyCH4IV (purity dropped from a healthy
+    29-48% range to 1-6%, lane count 11→8) that was never root-caused before
+    the session moved on. Reverted (`core/lanes.py`, `purity/analysis.py`).
+    **If resuming**: root-cause the HpyCH4IV regression specifically before
+    re-validating broadly — do not retry Attempt 1's row-banding idea, it's
+    a confirmed dead end for a different, incompatible reason.
+  - **Attempt 3 (2026-07-14), lane fragmentation specifically — implemented
+    and validated, a real partial fix.** Narrower than Attempts 1-2: targets
+    only a single fading lane splitting into fragments as its column-sum
+    noise flickers above/below the detection threshold (confirmed
+    fragment-to-fragment gaps, 26-40px, were *smaller* than genuine
+    inter-lane gaps elsewhere on the same image, 65-183px — ruling out any
+    single gap-size threshold). `_merge_fragmented_runs` in `core/lanes.py`
+    merges a run into a group only if the *candidate run's own width* is
+    under 30% of the image's reference lane width (`DEFAULT_FRAGMENT_
+    NARROW_FRACTION`) — not just "would the combined result look
+    reasonable." That distinction mattered: a first design (combined-span-
+    only cap) caused a real regression, caught by validating against every
+    real image before committing — it merged the ladder into the first
+    sample lane on one image, and merged two distinct real lanes together on
+    another, because one unusually wide run elsewhere inflated the
+    percentile-derived reference. Deliberately does not use the physical
+    comb or any assumed lane pitch as a reference (per the user: the gel is
+    a flexible medium no longer geometrically locked to the comb once
+    removed and run) — only this image's own already-detected run widths,
+    at runtime. **Validated against all 17 real images**: no image's lane
+    count increased; HpyCH4IV's only change was a sensible merge of two
+    fragments into a believable blended reading; `PDEV1580`'s already-good
+    matches were untouched. **Explicitly partial**: `PDEV1452`'s worst
+    3-fragment cluster only merges 2 of 3 — chose conservative parameters
+    over fully closing this case, given the demonstrated over-merge risk.
+    Gel smiling/curvature and bleed-over remain completely unaddressed.
+  - **Curve-tracing prototype (2026-07-14) — explored as a potential
+    replacement architecture, real mixed results, not adopted.** The user
+    directly questioned whether the rectangle-lane assumption is fundamentally
+    the wrong model, given visible real curvature — a fair question, since
+    every over-segmentation bug above is arguably a symptom of collapsing a
+    curved 2D reality into straight 1D projections. ML was considered and
+    ruled out first (see Design Decisions) for lack of any pixel/lane-level
+    ground truth. A background agent then prototyped per-strip lane
+    detection + simple centroid tracking (deliberately skipping the harder
+    lane-split/merge problem) on branch `curve-tracing-lane-detection`
+    (`src/gel_extractor/core/curve_lanes.py`, not merged, not wired into the
+    real pipeline). **Result: real, visible improvement on a well-behaved
+    gel** (HpyCH4IV — curves follow the comb-tooth angle better than
+    rectangles) **but did not fix the motivating hard case**: on `PDEV1452`,
+    curve-tracing produced *more* fragments than the rectangle approach
+    (~27 vs. ~14 real lanes) — independent per-strip detection is noisier
+    than one whole-image column projection, and the no-merge tracker
+    amplified that noise rather than resolving it. Visual comparisons saved
+    to `data/curve_tracing_prototype_comparisons/` (gitignored, see Data
+    Inventory). **Recommended next step if resumed**: don't re-detect lane
+    candidates independently per strip — run `detect_lanes` once on the
+    whole image to fix lane count/identity first, then only trace each
+    already-identified lane's local curvature within a narrow window around
+    its known position.
 
-- **`data/daria_data/attachments/*.png` are Benchling attachment-viewer
-  *screenshots* (full UI chrome included), not clean gel photos.** Confirmed
-  by matching the filename visible inside
-  `01_HpyCH4IV_PDEV1284_Protein_Purity.png`'s screenshot to an actual file in
-  `data/decodeon_gel_images/Protein Purity/` — that folder holds the clean
-  underlying originals. **Use the `decodeon_gel_images` versions for any
-  real image processing/testing against these particular proteins**, not the
-  `daria_data` PNGs (which were fine for visual review, not for a pipeline).
-- **Real gel photos aren't on a white background**, so the initial lane
-  auto-detection (threshold against the column-sum profile's absolute peak)
-  completely failed on a real image — it found one giant "lane" spanning the
-  whole gel rectangle. Fix: baseline-correct the column-intensity profile
-  before thresholding, reusing the *same* rolling-baseline function already
-  built for band detection along the other axis
-  (`core.bands.rolling_minimum_baseline`). This validated the modular
-  architecture decision in practice — the fix was a small, localized change
-  in `core/lanes.py`, not a rewrite.
-- **Tuned starting values** (still placeholders, per the Design Decisions
-  above, but now concrete in code rather than abstract): lane-detection
-  threshold fraction 0.03 (of the baseline-corrected column profile's peak),
-  baseline rolling-window 51px (same default as band detection, for
-  consistency), lane top-margin crop 5%, MW tolerance **20%** (top of the
-  originally-discussed ±15-20% range — moved up from an initial 17.5%
-  midpoint after real testing showed the true target band sitting ~19% off
-  the calibrated MW, just outside 17.5%), ladder-calibration minimum 3
-  matched bands and minimum R² 0.85, band-detection noise floor 10× the
-  estimated point-to-point noise level. Found via direct experimentation
-  against several real images in `decodeon_gel_images/Protein Purity/` —
-  expect further tuning as more real gels are run.
-- **A per-lane "not-found" state was added**, extending (not contradicting)
-  the original target-band-identification decision: that decision covered
-  what happens when the *ladder itself* can't be calibrated (hard error
-  unless `--allow-heuristic`). It didn't say what should happen when the
-  ladder calibrates fine but one *specific* lane's target band isn't found
-  within tolerance. Implemented as: that lane gets `confidence: "not-found"`
-  and `purity_percent: null` in its own result row, without aborting the
-  rest of the lanes in the same run. This is a reasonable extension made
-  during implementation, not something pre-approved at this granularity —
-  flagging it here in case it should be revisited.
-- **The heuristic (largest-band) fallback shows a real, understood bias**:
-  on a real dilution series, fainter lanes lose their faint contaminant
-  bands below the detection threshold first, which inflates apparent purity
-  as dilution increases. The dilution-series self-consistency test passes
-  but with a loose bound (~70 points; observed spread was ~59) — documented
-  inline in `tests/test_purity_integration.py`.
-- **Ladder calibration against real P7719 data validated, then immediately
-  surfaced two more real issues — both now root-caused and fixed
-  (2026-07-13).** Testing MW-matching against `8.6.25 Protein Purity.tif`
-  end to end initially found: (1) one sample lane produced 98 "detected
-  bands," almost certainly noise — **fixed** by adding an absolute
-  noise-floor gate to `detect_bands` (estimated from point-to-point signal
-  variability, which stays low for real peaks regardless of height but is
-  comparable to the signal itself on a truly blank lane); that lane now
-  correctly detects 0 bands, and the healthy lanes barely changed (one
-  marginal band dropped from two of them). (2) the other 9 sample lanes
-  found no band within the (then 17.5%) tolerance of the target MW at all —
-  investigated by trying to exclude "merged" ladder bands via a width
-  heuristic, which turned out fragile (a genuinely single but heavily-
-  stained band was nearly indistinguishable by width from an actually-merged
-  blob). The real fix ended up being the empirical multi-window search
-  described above in Design Decisions, **plus** widening the MW tolerance to
-  20% once the better calibration revealed the true target band sat ~19%
-  off — just outside the old 17.5% bound. After both fixes: **8 of 10 real
-  sample lanes now match consistently on the same MW (34.6-34.9 kDa)**,
-  not a scattered mix of coincidental matches.
-- **Broader real-image testing (2026-07-13) found and fixed a real
-  ladder-calibration gap, and clarified how much accuracy is actually
-  validated.** Swept lane detection + ladder calibration across all 11
-  `decodeon_gel_images/Protein Purity/` images (not just the one tuned
-  against so far). Initially, only 6/11 calibrated; investigating the 5
-  failures (by directly viewing each image, not just trusting the error)
-  found that 3 of them had a **visibly real but low-contrast ladder lane**
-  being wrongly filtered out by the noise-floor gate above — that gate's
-  10× threshold, tuned against one image's genuinely-blank lane, was too
-  strict for a different image's genuinely-faint-but-real one. **Fixed** by
-  using a more lenient noise floor (5×) specifically for ladder-lane
-  detection, since calibration has its own downstream guardrails (band
-  count, R²) to catch a bad result; sample-lane detection stays at the
-  stricter default, since it has no such guardrail and a false positive
-  there directly corrupts the purity ratio. Result: **10 of 11 images now
-  calibrate successfully** (R² 0.89-0.98). Important scope caveat, prompted
-  by direct user question: this only validates the calibration *machinery*
-  across those 10 images, not full purity accuracy — see the per-file
-  protein-identity notes in Data Inventory above. Only 1 image (HpyCH4IV)
-  has both a clean file and a confirmed target MW to validate against
-  end-to-end; a second guess (assuming `251017_..._FusionProtein.tif` was
-  the FCE-T7 RNAP fusion referenced in the submitter's email) was tested and
-  found wrong, so it's been
-  retracted rather than reported as a finding. Getting confirmed MWs for the
-  other identified proteins (Esp3I, IdeS Protease, TelA, R-218/TET3 fusion,
-  CL_ASR29) is now tracked as a question for end users
-  (`QUESTIONS_FOR_USERS.md`).
-- **Confirmed (not just suspected) limitation: a dilution-detectability
-  threshold skews purity at high dilution.** Even after the fixes above, the
-  matched-purity trend still increases with dilution (29% → 48% across the
-  series) — the same direction as the earlier heuristic-mode bias. Raised
-  this directly with the user, who confirmed it's a real, expected concern:
-  **at some dilution level, faint contaminant bands become undetectable
-  before the target band does, inflating the computed ratio** — not
-  primarily a detection-parameter bug, but a fundamental limit-of-detection
-  effect that any densitometry approach will face. This affects both
-  `heuristic` and `mw-matched` confidence modes. **Decided and implemented
-  2026-07-14** — see the dedicated Implementation Status entry below and
-  `QUESTIONS_FOR_USERS.md`: the underlying limit-of-detection effect itself
-  isn't fixable, but low-signal lanes are now flagged rather than reported
-  at face value with no signal of reduced confidence.
-- **Real end-to-end accuracy test against 5 newly-confirmed MWs
-  (2026-07-13) found real failures, not a validation win.** Ran
-  `gelx purity analyze` with each confirmed MW (Esp3I, IdeS Protease, TelA,
-  TET3/R-218, CL_ASR29 — see Data Inventory) against its matching image:
-  - `7.17.24 PDEV772 Conc Stock.jpg` (TelA): ladder **fails to calibrate at
-    all** — confirmed by direct visual inspection, that lane's bands are
-    genuinely faint/low-count in this scan, not a detection-parameter issue.
-  - `251017_..._FusionProtein.tif` (TET3/R-218, one lot): ladder reports a
-    good fit (R²=0.98) but **every sample lane comes back "not-found."**
-    Diagnosed by dumping per-lane calibrated band MWs directly: lane
-    detection found **13 lanes where the image visually has 9** (1 ladder +
-    8 labeled dilution lanes), and nearly every "lane" carries a spurious
-    band calibrating to ~300 kDa — consistent with loading-well/aggregate
-    smear leaking into the lane crop rather than being excluded (the
-    top-margin crop is still just a fixed 5%, never validated against real
-    wells — see below), compounded by the lane-count over-detection itself.
-    This looks like real evidence for the lane-capture limitation below, not
-    a target-MW problem.
-  - Esp3I, IdeS Protease, and CL_ASR29 all calibrate and match a plausible
-    MW, but **purity swings inconsistently across what should be a
-    self-consistent dilution series** (e.g. Esp3I: 3%, 46%, 7%, 5% across
-    4 matched lanes) — a materially different failure mode than the
-    already-documented dilution-detectability trend (which is a smooth,
-    monotonic drift, not this kind of noise). Not yet root-caused.
-  - `10.31.25 PDEV1437.tif` (TET3/R-218, the other lot) is the one clean
-    result: matched MW lands right on target (58.2-58.4 vs. 58.219 expected)
-    consistently across lanes, though absolute purity is low (1-8%,
-    decreasing with dilution) — plausible for a real low-purity prep, but
-    unverified.
-  - **Net effect: the pipeline's real per-image accuracy is worse than the
-    single-image (HpyCH4IV) validation suggested.** Under active
-    investigation — likely connects to the lane-capture/over-segmentation
-    limitation below rather than requiring new target-MW-matching logic.
-- **Lane over-segmentation investigation (2026-07-13) — two approaches
-  tried, both reverted; not yet solved, root cause narrowed down
-  considerably.** Root mechanism confirmed by direct inspection: `detect_lanes`
-  collapses the *entire image height* into one column-sum profile before any
-  lane boundary exists (`signal.sum(axis=0)` in `core/lanes.py`), and
-  `Lane.crop` then applies that column range as a fixed-width rectangle over
-  the full height — no row-by-row awareness anywhere in lane detection.
-  Diagnosed on `251017_..._FusionProtein.tif` (13 lanes detected vs. 9 real:
-  1 ladder + 8 labeled dilution lanes):
-  - **Attempt 1 — row-banding + majority vote.** Split image height into 3
-    bands, ran column-sum detection independently per band, kept a column
-    only if ≥2 of 3 bands agreed it was "in a lane." Rationale going in: a
-    real lane runs the gel's full length so should have majority support,
-    while a localized artifact (dust, a corner) shouldn't. **Backfired**:
-    directly cropping and viewing the suspect region showed it was actually
-    the gel slab's own *physical right edge* (gel fading into background
-    paper), which — being a literal physical boundary — runs the *entire*
-    image height and got votes from all 3 bands, while a real sample lane's
-    doublet band turned out to be vertically *localized* near the top of
-    the gel (mostly blank below it) and lost the majority vote. Net result:
-    lane count dropped 13→12, but a real lane was lost and the actual
-    artifact was kept — a regression, not a fix. Reverted.
-  - **Attempt 2 — explicit gel-edge trimming.** Added `detect_gel_extent()`:
-    sample a background reference from the image's own outer border, compute
-    each column's median intensity across full height, classify columns by
-    nearest-centroid distance (background reference vs. overall-median
-    "interior" reference, using absolute deviation rather than assuming a
-    brightness direction — confirmed necessary and sufficient by checking a
-    real `data/gia_data` image, which is inverted-contrast: black background,
-    bright gel/bands, the opposite of purity's white-background/dark-band
-    convention), then walk outward from the image's horizontal center to find
-    the contiguous gel region, trimmed inward by a fixed margin. Wired into
-    `analyze_image()` to scope `detect_lanes` to the gel's interior only.
-    **Real, verified improvement on 10 of 11 images**: every one of the 11
-    `decodeon_gel_images/Protein Purity/` images calibrated afterward
-    (previously 10/11 — this fixed TelA's total calibration failure too),
-    and lane counts dropped meaningfully on most images (e.g. IdeS 12→7,
-    CL_ASR29 10→8) by excluding the physical gel edge from the column-sum
-    profile. On the fusion-protein image specifically: 13→12, confirmed by
-    direct crop that the isolated far-right dust artifact was gone; one
-    residual sliver-artifact remained (the edge is slightly *curved/slanted*
-    down the image height, so one global cutoff can't perfectly exclude it
-    at every row — tried intersecting per-band extents to chase the curve,
-    but individual bands with less real content gave noisy/unreliable
-    results, one falling back to "couldn't classify" entirely). **However:
-    directly re-running all 5 confirmed-MW proteins plus the HpyCH4IV
-    baseline surfaced a real regression** — HpyCH4IV (our only
-    externally-validated ground truth) went from a stable 29-48% purity
-    across 8/10 matching lanes (34.6-34.9 kDa, matches memory of the
-    original fix) down to 1-6% purity across only 3/7 matching lanes
-    (32.6-33.3 kDa) after edge-trimming. Lane count for this image dropped
-    11→8 (untrimmed vs. trimmed) and lane widths/positions shifted
-    materially (e.g. one lane went from width 100 to width 57, another from
-    103 to 114 with a different position) — **not yet root-caused**: could
-    be real lanes getting merged together (changing which "lane index" a
-    given physical sample lands on, and/or inflating a lane's total-area
-    denominator by merging two real lanes' content), a good real lane being
-    partially clipped by the new trim boundary, or something else. Reverted
-    both attempts (`git checkout` on `core/lanes.py` and
-    `purity/analysis.py`) rather than leave a regressed HpyCH4IV result in
-    place — **repo is back to the last known-good state (36 tests passing,
-    commit `b0e42c8`)**. (Note: git history was rewritten 2026-07-13, after
-    this point, to remove individual names from commit contents — see
-    Working Agreements — so this hash reflects the rewritten history.)
-  - **To resume:** the gel-edge-trimming *idea* (direction-agnostic
-    nearest-centroid classification, verified conceptually sound against
-    both contrast conventions) still looks like the right general direction
-    — it fixed real problems on 10/11 images including TelA's calibration.
-    Before re-attempting: root-cause the HpyCH4IV regression specifically
-    (compare untrimmed vs. trimmed lane boundaries for that image — recorded
-    above — to see exactly which real lanes got merged/clipped and why) and
-    fix that *before* re-validating across all 11 images plus the 5
-    confirmed-MW proteins again. Don't re-attempt row-banding/majority-vote
-    (Attempt 1) — it's now a confirmed dead end for this specific problem,
-    given real bands can be vertically localized while physical gel edges
-    are not, which is the opposite of what that approach assumed.
 - **Individual names removed from all docs, tests, and git history
-  (2026-07-13).** `AGENTS.md`, `QUESTIONS_FOR_USERS.md`, and
-  `tests/test_purity_integration.py` had accumulated specific submitter/
-  reviewer names and email addresses (e.g. full name + `@neb.com` address
-  for each sub-project's submitter, a reviewer's name attached to the
-  NEBcutter suggestion). Replaced with role-based references (e.g. "the
-  purity project submitter," "a reviewer") in the current files, then
-  retroactively scrubbed the same strings from every prior commit's file
-  content via `git filter-branch --tree-filter` (safe: confirmed nothing had
-  been pushed to `origin` beyond the initial commit, which had no names in
-  it) — followed by removing the `refs/original/*` backup refs, expiring the
-  reflog, and `git gc --prune=now` so the old blobs are actually gone, not
-  just unreferenced. Commit hashes for every commit changed as a result
-  (content, authorship, dates, and messages were preserved) — see Working
-  Agreements for the standing rule going forward. One deliberate exception,
-  confirmed with the user: the pre-existing `data/daria_data/` directory
-  path (that folder is gitignored and never actually committed, only the
-  path string appears in doc prose) was left as-is rather than renamed.
-- **`--debug` visualization output implemented (2026-07-14).** `gelx purity
-  analyze ... --debug [PATH]` writes an annotated copy of the input image:
-  lane boxes (blue = ladder, amber = sample), band boxes (green = target/
-  matched, red = other/contaminant), a per-lane label with purity %/matched
-  MW (or "not-found"), and the ladder lane's calibrated MW at each fitted
-  band position. Built as one feature for both debugging and end-user use
-  (not a separate dev-only tool) per discussion with the user — see
-  [[debug_visualization_feature]] in memory for the full scope discussion.
-  `analyze_image()`'s return signature changed from `(results,
-  ladder_lane_index)` to `(results, ladder_lane_index, debug_info)` to carry
-  the raw per-lane `Band` detections a renderer needs (`LaneDebugInfo`/
-  `AnalysisDebugInfo` in `purity/analysis.py`) without polluting `LaneResult`
-  (kept clean for table/CSV/JSON output). Added `pillow` as an explicit
-  dependency (previously only a transitive one via scikit-image). 41 tests
-  passing (was 36).
-  - **Immediately paid for itself**: running `--debug` against
-    `251017_..._FusionProtein.tif` (the stuck lane-over-segmentation case,
-    see the entry above) visually confirmed the over-segmentation at a
-    glance (multiple thin lane boxes visibly slicing through what's clearly
-    one physical lane, plus the isolated far-right artifact box) --
-    **but also surfaced a bigger, previously-unclear problem: the ladder's
-    calibrated MW tick marks place the visibly dominant doublet band
-    between the 130 and 180 kDa ticks, nowhere near the 58.2 kDa target.**
-    That's a large miscalibration (likely the multi-window best-fit search
-    picking a materially wrong window/alignment for this image's ladder),
-    not just a lane-boundary problem -- previously this was only visible
-    indirectly (every lane reporting "not-found"), not as a clear "the
-    calibration itself put the ticks in the wrong place" signal. This
-    likely needs to be root-caused *before* (or alongside) the HpyCH4IV
-    lane-trimming regression -- both are part of "why doesn't this image
-    produce a sane result," but they may be two separate bugs, not one.
-- **Adaptive top/bottom vertical crop bounds implemented (2026-07-14) --
-  root-caused and fixed the ladder-miscalibration finding above.** Using
-  `--debug`, the user spotted a second real artifact: the "comb" (the
-  plastic insert that forms loading wells) leaves a scalloped top edge with
-  real staining smear at the tooth boundaries, and the fixed 5% top-margin
-  crop wasn't nearly deep enough -- measured on real images, the fringe
-  extends 10.9%-21.9% of image height on HpyCH4IV (worse than the
-  fusion-protein image's 10-16%), confirmed by directly viewing `--debug`
-  output showing red band boxes drawn right around the comb's "V" shapes.
-  Separately, dumping the ladder lane's raw detected bands for the
-  fusion-protein image found the actual root cause of the earlier
-  miscalibration finding: a **dark horizontal line/edge near the very
-  bottom of the image (~88-90% down), appearing at nearly the same row in
-  *every* lane of *every* image checked (ladder included) -- confirmed via a
-  cross-lane row-position check, not just one lane's data. Its area (~2129
-  in one ladder lane) dwarfed every real band (next-largest ~243), so it
-  always won a slot in the "keep the k most prominent bands" step,
-  displacing genuine fainter rungs and corrupting the whole position-to-MW
-  mapping** -- not just the bottom of it. This is present in HpyCH4IV too
-  (our validated baseline), not just the stuck image; it just didn't happen
-  to break that image's results as visibly.
-  - **Fix**: `core.lanes.detect_comb_fringe_end` (per-lane, since fringe
-    depth varies lane to lane) uses each row's standard deviation across
-    that lane's own narrow width -- a comb tooth's converging diagonal
-    edges create real side-to-side contrast within one lane's column range,
-    while a real resolved band is close to uniform across that same width.
-    `core.lanes.detect_bottom_edge_artifact_start` (once per image, using
-    every detected lane's columns combined, since this artifact is
-    consistent across the whole gel width and averaging makes it stand out
-    far more clearly than any single lane's own noisier profile) uses an
-    IQR-style spread-based threshold (10th/90th percentile spread), not a
-    ratio to the median -- a plain ratio breaks down whenever a lane is
-    mostly blank (median near zero, so *any* signal looks "elevated"),
-    caught via a synthetic test with a near-blank lane. Both restrict their
-    search to a bounded window near their respective edge
-    (`DEFAULT_EDGE_SEARCH_FRACTION`, 30%): without this, a real target band
-    shared across every lane of a dilution series (same protein, same
-    migration distance) can look exactly like the "consistent across all
-    lanes" bottom artifact to that detector, so real mid-gel content needs
-    to be kept out of consideration entirely rather than trying to
-    distinguish it by shape. `Lane.crop` (the old fixed-fraction method) and
-    its test were removed -- fully superseded, no longer called anywhere.
-  - **A second, independent bug was found and fixed while validating this:
-    each lane now gets its own adaptive top crop, but `calibrate_ladder` fits
-    log(MW) vs. position *within the ladder lane's own cropped profile*.**
-    Sample-lane band positions are relative to *that lane's own* crop, which
-    can differ from the ladder's by 100+ px (comb depth varies lane to
-    lane) -- so "position X" no longer means the same physical row in both,
-    and `calibration.mw_at(band.center)` was silently computing the wrong
-    MW for every sample lane. Caught by noticing purity dropped to
-    single-digit percentages across *every* image after the crop fix landed
-    (too uniform to be random noise) -- traced to a real dominant band
-    (area 1025) calibrating to 56.9 kDa instead of ~29, while a much smaller
-    band (area 124) coincidentally calibrated into tolerance and got matched
-    instead. **Fixed** by threading a `position_offset` (`this lane's
-    top_bound - the ladder's own top_bound`) through `analyze_lane`/
-    `_match_target_band`, re-expressing each sample band's position in the
-    ladder's frame before calibrating.
-  - **Net result after both fixes, re-validated across all 5 confirmed-MW
-    proteins plus HpyCH4IV:** matched MWs landed much closer to the true
-    targets almost everywhere (e.g. IdeS Protease hit an exact 36.8 vs.
-    36.826 confirmed; CL_ASR29 tightened to 39.0-46.5 vs. the old scattered
-    38.5-53.2; HpyCH4IV to 28.5-32.4 vs. the old 32.1-34.9), and purity
-    percentages returned to healthy, higher ranges consistent with a
-    purified prep (e.g. CL_ASR29 40-81%, HpyCH4IV up to 71-74% on its most
-    concentrated lanes) instead of the depressed single digits the
-    coordinate-frame bug had caused. The fusion-protein image improved from
-    0/12 lanes matched to 3/12 (still the hardest case -- likely still
-    affected by the untouched horizontal over-segmentation problem above).
-  - **Test regression, root-caused and fixed 2026-07-14**:
-    `test_dilution_series_purity_is_self_consistent` had failed (spread 82 vs.
-    the 70-point bound) on HpyCH4IV in `--allow-heuristic` mode, traced to
-    lane 10 reporting a fabricated 0%. Confirmed via `--debug`: lane 10 is a
-    spurious lane detection 16px from the image's right edge (isolated by an
-    85px gap from lane 9), with **zero bands detected at all** -- not a real
-    dilution-series sample. The general bug underneath: `_analyze_lane_detailed`
-    computed `total_area = sum(...)` over an empty `bands` list, and
-    `_safe_percent(0, 0)` silently returned `0` -- so "nothing detected" was
-    reported as "0% purity" (implying a confidently-measured, all-contaminant
-    lane) instead of the honest "not-found" the MW-mismatch path already used.
-    **Fixed**: `_analyze_lane_detailed` now returns `confidence="not-found"`,
-    `purity_percent=None` immediately when zero bands are detected, before
-    MW-matching or the heuristic fallback -- so a batch debug run
-    (`scripts/generate_debug_images.py`, added the same day; see "Development"
-    below) that surfaced the identical pattern on a second image
-    (`4.16.26 Protein Purity.tif`, lane 14) is now also handled correctly.
-    Spread on HpyCH4IV dropped to 33, comfortably within the 70-point bound,
-    with no threshold change needed. This is a general fix, not specific to
-    either image or to the still-open horizontal over-segmentation problem
-    below -- a genuinely blank/degenerate real sample lane would hit the same
-    code path and should get the same honest result.
-  - 45 tests total, all passing.
-- **`LaneResult.low_signal` flag added (2026-07-14), implementing the
-  dilution-detectability decision above** (option (a) from
-  `QUESTIONS_FOR_USERS.md`: flag low-total-signal lanes as lower-confidence
-  rather than reporting them at face value; the user explicitly asked for
-  this to be built now, not deferred). `analyze_image` compares each sample
-  lane's total detected band area against the most-concentrated lane in the
-  same image; a lane under `DEFAULT_LOW_SIGNAL_FRACTION` (20%, placeholder,
-  not yet empirically tuned) of that maximum gets `low_signal=True`. This is
-  necessarily a whole-image, cross-lane comparison -- `analyze_lane()` called
-  standalone has no other lane to compare against and always leaves it
-  `False`; only `analyze_image` can set it. Surfaced everywhere a result
-  reaches an end user: a "Flag" column in the table (`"low signal"` text), a
-  `low_signal` key in CSV/JSON, and a `" low-sig"` suffix on `--debug` lane
-  labels. Only applies when `purity_percent` is not `None` -- a lane with
-  literally zero bands is already `not-found` (see the zero-bands fix
-  above), which already conveys "no usable signal" on its own.
-  **Validated against the real HpyCH4IV dilution series**: lanes 5-8 (the
-  higher, likely dilution-inflated purity readings, 77-82%) got flagged;
-  lane 9 (lower, 65%, presumably less dilute) didn't; lane 10 (already
-  `not-found`) is unaffected. This doesn't fix the underlying limit-of-
-  detection effect -- there isn't a fix, the information genuinely isn't in
-  the image below some dilution -- it just stops an inflated reading from
-  being presented with the same confidence as a well-loaded lane. 47 tests
-  total, all passing.
+  (2026-07-13).** Replaced accumulated submitter/reviewer names and email
+  addresses with role-based references, then retroactively scrubbed prior
+  commits via `git filter-branch --tree-filter` (safe — nothing had been
+  pushed beyond an initial, name-free commit). See Working Agreements for
+  the standing rule. **Side effect discovered 2026-07-14**: this is *why*
+  local and `origin` briefly became unrelated git histories — filter-branch
+  can't preserve a GPG signature on a rewritten commit (even one with
+  nothing to scrub), which changed the root commit's hash and cascaded to
+  every descendant. Resolved via `git push --force-with-lease` after
+  confirming the stale `origin/main` had nothing of value on it.
+- **`--debug [PATH]` visualization implemented (2026-07-14).** Writes an
+  annotated copy of the input image: lane boxes (blue=ladder, amber=sample),
+  band boxes (green=target/matched, red=other/contaminant), a per-lane
+  purity/MW label, and the ladder's calibrated MW at each fitted band
+  position. Built as one feature for both debugging and end-user use, not a
+  separate dev-only tool. Immediately useful: running it against the stuck
+  fusion-protein image visually confirmed over-segmentation at a glance and
+  surfaced a second, previously-invisible bug (see next entry).
+- **Adaptive top/bottom vertical crop implemented (2026-07-14) — root-caused
+  and fixed a real ladder-miscalibration bug found via `--debug`.** Two real
+  artifacts, present on every real image checked, that a fixed 5%
+  top-margin crop didn't handle: (1) the loading-well "comb" leaves a
+  scalloped fringe with real staining smear, varying 11-22% of image height
+  lane to lane; (2) a dark horizontal cassette/tape-edge artifact near the
+  very bottom of every image, in nearly the same row across every lane,
+  whose outsized area always won a slot in the "keep the k most prominent
+  bands" step — corrupting the whole ladder position-to-MW mapping, not just
+  the bottom of it. **Fix**: `detect_comb_fringe_end` (per-lane, since
+  fringe depth varies lane to lane — uses each row's own-width standard
+  deviation, since a comb tooth's converging edges create real side-to-side
+  contrast that a real band doesn't) and `detect_bottom_edge_artifact_start`
+  (once per image across all lanes combined, using an IQR-style spread
+  threshold rather than a ratio-to-median, which breaks down on a mostly-
+  blank lane). Both restrict their search to a bounded window near their
+  edge, so a real band shared across a whole dilution series can't be
+  mistaken for the artifact. **A second, independent bug found while
+  validating this**: each lane's own adaptive top crop meant sample-lane
+  band positions were no longer in the same coordinate frame as the
+  ladder's own crop, silently producing wrong MWs for every sample lane.
+  Fixed via a `position_offset` re-expressing each sample lane's band
+  positions in the ladder's frame before calibrating. **Net result,
+  re-validated across 5 confirmed-MW proteins + HpyCH4IV**: matched MWs
+  landed much closer to true targets almost everywhere (e.g. IdeS Protease
+  hit an exact 36.8 vs. 36.826 confirmed), and purity returned to healthy
+  ranges consistent with a purified prep instead of the coordinate-frame
+  bug's depressed single digits.
+- **Zero-detected-bands bug fixed (2026-07-14)**: a lane with no bands at
+  all was silently reported as a confident "0% purity" (from `_safe_percent
+  (0, 0)`) instead of the honest `not-found` the MW-mismatch path already
+  used — found via a test regression (`test_dilution_series_purity_is_
+  self_consistent`, traced to a spurious lane detection with zero real
+  content). Fixed by returning `not-found` immediately when zero bands are
+  detected, before MW-matching or the heuristic fallback. General fix, not
+  image-specific — a batch debug-image script (`scripts/generate_debug_
+  images.py`, gitignored under `scripts/`) confirmed the identical pattern
+  on a second image.
+- **`LaneResult.low_signal` flag added (2026-07-14)**, implementing the
+  dilution-detectability decision: `analyze_image` flags a lane whose total
+  detected band area is under `DEFAULT_LOW_SIGNAL_FRACTION` (20%,
+  unvalidated placeholder) of the most-concentrated lane in the same image
+  — a whole-image, cross-lane comparison only `analyze_image` can make
+  (`analyze_lane()` alone always leaves it `False`). Surfaced as a "Flag"
+  table column, a `low_signal` CSV/JSON field, and a `low-sig` `--debug`
+  label suffix. Only applies when `purity_percent` isn't already `None`.
+  Validated against HpyCH4IV: flagged exactly the higher, likely-inflated
+  readings, left the lower/less-dilute ones alone.
+- **Real end-to-end comparison against 6 newly-confirmed-purity images
+  (2026-07-14, from a user-provided PowerPoint — see Data Inventory's
+  `pptx_tet3_gels` entry) — the richest ground truth yet, not a clean
+  validation win.** Two distinct problems found: (1) lane over/under-
+  segmentation on all 6 images, confirmed by direct visual inspection, not
+  just lane counts (one image sliced a single continuous band into 7 fake
+  "lanes" with essentially random purity numbers) — motivated the
+  fragmentation fix and curve-tracing prototype above; (2) a separate,
+  unresolved MW-migration discrepancy on the R-236 lots (`PDEV1452`,
+  `PDEV1495`): the dominant, clearly-real band consistently calibrates
+  ~40-50 kDa higher than the confirmed MW, too large a gap to be noise.
+  Candidate explanations, not distinguished between: wrong calibration
+  window, genuinely anomalous SDS-PAGE migration, or the confirmed MW
+  referring to a cleaved form while the gel's dominant band is uncleaved (by
+  analogy to the confirmed R-217/R-218 cleaved-product relationship — see
+  Data Inventory). Deliberately deferred, tracked as a new question in
+  `QUESTIONS_FOR_USERS.md` rather than guessed at; marked out of MVP scope
+  per user decision 2026-07-14. Not uniformly bad: `PDEV1580`'s correctly-
+  detected real lanes landed within a few points of its confirmed 98.5%.
+- **CLI fails cleanly on bad input (2026-07-14)** — a missing/unreadable
+  image file or an unwritable `--debug` output path used to dump a raw
+  Python traceback; now caught (`OSError`, alongside the existing
+  `LadderNotCalibratedError`/`ValueError` handling) and printed as a single
+  `error: ...` line, matching how every other CLI failure mode already
+  behaved. MVP polish, not a design change.
 
 ## Planned Features — Not Yet Built
 
@@ -746,43 +563,45 @@ yet. Don't silently fix or dismiss these without discussing first — they're
 recorded here specifically so they aren't lost or re-litigated from scratch.
 
 - **Lane capture has no horizontal smiling/curvature or bleed-over
-  handling — actively being investigated, not yet fixed.** (The vertical
-  top/bottom bound problem — comb/well fringe and the bottom cassette/tape
-  edge — is now resolved; see Implementation Status's adaptive-crop entry,
-  2026-07-14.) `detect_lanes` still collapses the whole image height into
-  one column-sum profile before any lane boundary exists, with no row-by-row
-  awareness horizontally. This doesn't account for "gel smiling" (edge lanes
-  migrating faster/slower than center lanes, curving bands across the gel —
-  confirmed present, at least as a curved/slanted *physical gel edge*, on a
-  real image), and doesn't guard against bleed-over from a neighboring lane
-  when bands are wide/diffuse (real merged-blob band widths over 100px
-  observed). **Two fix attempts tried and reverted 2026-07-13 — full detail,
-  including a regression found on our one ground-truth-validated image
-  (HpyCH4IV), in Implementation Status's "Lane over-segmentation
-  investigation" entry.** Read that before re-attempting a fix — it records
-  which approach is a confirmed dead end (row-banding/majority-vote) and
-  which is promising but has an unresolved regression to root-cause first
-  (explicit gel-edge trimming).
+  handling.** (The vertical top/bottom bound problem — comb/well fringe and
+  the bottom cassette/tape edge — is resolved; lane *fragmentation* got a
+  validated partial fix 2026-07-14; both see Implementation Status.) Gel
+  smiling (edge lanes migrating faster/slower than center lanes, curving
+  bands across the gel — confirmed present on a real image) and bleed-over
+  from a neighboring lane when bands are wide/diffuse remain unfixed. A
+  curve-tracing prototype was explored 2026-07-14 as a potential fix for
+  smiling specifically (branch `curve-tracing-lane-detection`) — real
+  improvement on a clean gel, did not fix the worst real over-segmentation
+  case, not adopted. See Implementation Status's dedicated entries for full
+  detail, including which approaches are confirmed dead ends, before
+  re-attempting anything here.
 - **Dilution-detectability threshold skews purity at high dilution —
-  confirmed real, partially mitigated 2026-07-14, not fixable outright.** As
-  dilution increases, faint contaminant bands drop below the detection floor
-  before the target band does, inflating apparent purity (observed in both
-  `heuristic` and `mw-matched` modes: 29% → 48% across one real dilution
-  series). The user confirmed this is an expected, real phenomenon (a
-  fundamental limit-of-detection effect, not primarily a tunable-parameter
-  bug) — there's no code fix for the effect itself, the information genuinely
-  isn't in the image below some dilution. **Decided and implemented**: flag
-  low-total-signal lanes as lower-confidence (`LaneResult.low_signal`, see
-  Implementation Status) rather than reporting them at face value. Still
+  confirmed real, partially mitigated, not fixable outright.** As dilution
+  increases, faint contaminant bands drop below the detection floor before
+  the target band does, inflating apparent purity. Not primarily a
+  tunable-parameter bug — the user confirmed this is an expected,
+  fundamental limit-of-detection effect. Flagged via `LaneResult.low_signal`
+  rather than reported at face value (see Implementation Status). Still
   open: the flagging threshold (`DEFAULT_LOW_SIGNAL_FRACTION = 0.2`) is an
-  unvalidated placeholder, and the user's other floated idea (defaulting to
-  the most-concentrated lane as the sole authoritative measurement) wasn't
-  pursued — revisit if the flag alone doesn't feel sufficient in practice.
+  unvalidated placeholder, and the alternative idea (most-concentrated lane
+  as sole authoritative measurement) wasn't pursued.
+- **R-236 lots' MW-migration discrepancy** (`PDEV1452`, `PDEV1495`) —
+  confirmed real, ~40-50 kDa gap between calibrated position and confirmed
+  MW, not root-caused. See Implementation Status's pptx-comparison entry for
+  candidate explanations. Deferred, marked out of MVP scope 2026-07-14 —
+  revisit post-MVP.
+- **TelA's ladder lane fails to calibrate entirely** (`7.17.24 PDEV772 Conc
+  Stock.jpg`) — confirmed genuinely low-contrast/low-band-count in this
+  specific scan, not a detection-parameter issue.
+- **Ground truth is still thin relative to the full example set**: 7 of the
+  ~17 real images tested have a confirmed purity % and/or MW to validate
+  against; the rest only confirm the calibration *machinery* runs, not that
+  the reported purity % is correct.
 
 ## Open Questions
 
 No open internal design/architecture questions remain as of this update
-(2026-07-13). This section is for questions Jacob and Claude can resolve
+(2026-07-14). This section is for questions Jacob and Claude can resolve
 through design discussion alone. Questions that need an answer from the
 domain-expert end users (the project submitters, reviewers, etc.) instead
 live in `QUESTIONS_FOR_USERS.md` — check there for the current accrued list before
@@ -794,37 +613,32 @@ rather than guessing.
 - `data/daria_data/project.md` — original proposal text for sub-project 1.
 - `data/daria_data/attachments/` — 4 example gel images (PNG/JPG) + 1 PDF of an
   email thread with additional per-protein context (molecular weights, ladder
-  used, Benchling links). **Important (found 2026-07-13 during
-  implementation): these PNGs are Benchling attachment-viewer screenshots
-  (full UI chrome included), not clean gel photos** — see Implementation
-  Status below. `data/decodeon_gel_images/Protein Purity/` has the clean
-  originals for at least the HpyCH4IV one (`8.6.25 Protein Purity.tif`,
-  confirmed by the filename visible in the screenshot).
+  used, Benchling links). **Important: these PNGs are Benchling attachment-
+  viewer screenshots** (full UI chrome included), not clean gel photos —
+  `data/decodeon_gel_images/Protein Purity/` has the clean original for at
+  least HpyCH4IV (`8.6.25 Protein Purity.tif`, confirmed by the filename
+  visible in the screenshot).
 - `data/gia_data/project.md` — original proposal text for sub-project 2.
 - `data/gia_data/attachments/` — 22 raw 96-well gel scans (TIFF), 2 PDFs of the
   resulting heatmap plots, 2 `.txt` files with the target well-by-time
   activity-score matrices (SfiI enzyme).
 - `data/gia_data/attachments/TfiI/` — added 2026-07-13. A much larger activity
   gel dataset for a different enzyme (TfiI), same 96-well-grid paradigm as
-  SfiI (confirmed by inspection — visible activity decay over time, dead
-  wells collapsing to a single band). Adds real complexity beyond SfiI:
+  SfiI. Adds real complexity beyond SfiI:
   - Four independent screen conditions (General, pH, ADD, CAPS Screen), each
     with its own Normalization baseline + multi-timepoint time course.
   - A `Validation/` subfolder that is **structurally different** — dose-
     response by formulation/lot (4 quadrants × 2-fold dilution series), not a
-    96-well time-course grid. Will need its own parsing logic or explicit
-    scoping-out; not yet decided (see `QUESTIONS_FOR_USERS.md`).
-  - Every timepoint has a plain + `_unlabeled` image pair (identical pixel
-    content minus the burned-in well-number text/caption) — the unlabeled
+    96-well time-course grid. Whether this needs its own parsing logic or
+    explicit scoping-out is not yet decided (see `QUESTIONS_FOR_USERS.md`).
+  - Every timepoint has a plain + `_unlabeled` image pair — the unlabeled
     version is likely preferable for automated segmentation.
   - **Ladder confirmed 2026-07-14: N0550**, always, across activity/titer
-    work (not confirmed whether other teams also use it). This is a **DNA
-    fragment-size ladder (kb, not kDa)** — a different unit and a different
-    kind of gel (agarose, not SDS-PAGE) from the purity workflow's protein
-    MW ladders (P7719/P7717), so it does *not* belong in
-    `core/ladder.py`'s `KNOWN_LADDERS` and hasn't been added there. Recording
-    the full band list here for whenever the activity/titer workflow is
-    actually built:
+    work. This is a **DNA fragment-size ladder (kb, not kDa)** — a different
+    unit and gel type (agarose, not SDS-PAGE) from the purity workflow's
+    protein MW ladders, so it does *not* belong in `core/ladder.py`'s
+    `KNOWN_LADDERS`. Full band list, recorded for whenever activity/titer is
+    built:
     ```
     10.0 kb / 40 ng    2.0 kb / 40 ng     0.9 kb / 34 ng    0.4 kb / 49 ng
     8.0 kb / 40 ng     1.5 kb / 57 ng     0.8 kb / 31 ng    0.3 kb / 37 ng
@@ -834,87 +648,84 @@ rather than guessing.
     3.0 kb / 120 ng*                      0.5 kb / 124 ng*
     ```
     (`*` = mass-reference bands, per the labeled product image.)
-  - Per-image `.inf` sidecar files (AlphaImager instrument-export XML:
-    exposure, gain, binning, creation timestamp, etc.) — potentially useful
-    for cross-image normalization, though the samples checked so far show
-    identical default-looking values, so it's unconfirmed whether they vary
-    meaningfully in practice (see `QUESTIONS_FOR_USERS.md`).
+  - Per-image `.inf` sidecar files (AlphaImager instrument-export XML) —
+    potentially useful for cross-image normalization, though samples checked
+    so far show identical default-looking values (see `QUESTIONS_FOR_USERS.md`).
   - Data-quality anomalies noted (not fixed): 2 files with an unexpected
-    `.ory` extension (actually annotation-layer XML, not `.inf`-style
-    metadata), a stray `Thumbs.db`, an orphaned `Validation/a.tif`/`a.inf`
-    pair (appears to duplicate the Validation Normalization image), several
-    `_unlabeled` filename typos, and one oddly-sized TIFF in `Validation/`.
+    `.ory` extension, a stray `Thumbs.db`, an orphaned `Validation/a.tif`/
+    `a.inf` pair, several `_unlabeled` filename typos, one oddly-sized TIFF.
 - `data/decodeon_gel_images/Protein Purity/` — added 2026-07-13. 11 more
   example purity gels (TIFF/JPG), same ladder + dilution-series layout as
-  `daria_data`. All 11 are the "no embedded standards" case (see Sub-project 1
-  above) — this batch adds volume/variety to that case but zero new examples
-  of the embedded-purity-standard-ladder case. Two images
+  `daria_data`, all the "no embedded standards" case. **This is the dataset
+  all real-image pipeline testing/tuning has actually used** — `daria_data`'s
+  images were never fed into the pipeline itself (screenshots aren't valid
+  input), only its email text for known MWs. Two images
   (`260407_protein_purity.tif`, `4.16.26 Protein Purity.tif`) are notably
-  low-contrast/washed-out — **root cause confirmed 2026-07-14**: an old
-  Coomassie-type stain the user's team discontinued using ~2025-12; scans
-  from that point forward should look better, nothing to fix in the tool. One
-  (`251017_..._FusionProtein.tif`) shows a doublet band with explicit
-  dilution-fold labels burned in — a useful edge case for band-matching logic.
-  **This is the dataset all real-image pipeline testing/tuning has actually
-  used** (lane detection, ladder calibration, the noise-threshold fix) —
-  `daria_data`'s images were never fed into the pipeline itself (see below),
-  only its email text for known MWs.
-  - **Per-file protein identity, confirmed by directly viewing each image
-    (2026-07-13)** — only `8.6.25 Protein Purity.tif` (HpyCH4IV) has both a
-    clean testable file *and* an independently confirmed MW (29,267 Da, from
-    the submitter's email); the rest have a visible identity label but **no
-    confirmed MW yet** — tracked as a new question for end users in
-    `QUESTIONS_FOR_USERS.md`:
+  low-contrast — **root cause confirmed 2026-07-14**: an old stain the
+  user's team discontinued using ~2025-12, nothing to fix in the tool. One
+  (`251017_..._FusionProtein.tif`) shows a doublet band with dilution-fold
+  labels burned in.
+  - **Per-file protein identity, confirmed by directly viewing each image**
+    — only `8.6.25 Protein Purity.tif` (HpyCH4IV) has both a clean testable
+    file *and* an independently confirmed MW (29,267 Da):
     - `2.4.25 PDEV981 Protein Purity.jpg` — Esp3I (PID940/PDEV981),
       **confirmed MW 61,708.19 Da**
     - `9.20.24 PDEV829 Conc Stock.jpg` — IdeS Protease (PDEV829),
       **confirmed MW 36,825.91 Da**
     - `7.17.24 PDEV772 Conc Stock.jpg` — TelA (NEB3606, PDEV772),
-      **confirmed MW 39,358.70 Da**
+      **confirmed MW 39,358.70 Da** (ladder fails to calibrate — see Known
+      Limitations)
     - `10.31.25 PDEV1437.tif` / `251017_..._FusionProtein.tif` — same
       construct, two lots/dates: R-218, a TET3 fusion (PDEV1437 / PID1384),
-      **confirmed MW 58,218.74 Da**. **Not** the FCE-T7 RNAP fusion from
-      the submitter's email — an earlier guess assuming that was wrong (confirmed by
-      testing: no band anywhere near 200,717 Da), corrected once actually
-      checked.
+      **confirmed MW 58,218.74 Da**
     - `1.15.25 Concentrated Stock.jpg` — CL_ASR29 (PID926/PDEV946),
       **confirmed MW 44,599.87 Da**
-    - `6.12.26 PDEV1718 Protein Purity.tif`, `260612_ProteinPurity.tif`,
-      `260407_protein_purity.tif`, `4.16.26 Protein Purity.tif` — **no
-      legible protein label found at all**; identity unknown, not just MW.
-      **2 of the 4 resolved 2026-07-14:**
-      - `260612_ProteinPurity.tif` — CoZyCap Njord, **confirmed MW
-        202,491.88 Da**, ladder **confirmed P7717** (now seeded, see above).
-      - `6.12.26 PDEV1718 Protein Purity.tif` — KasI, **confirmed MW
-        32,314.44 Da**, ladder **inferred P7719** (11 bands visible, matching
-        P7719's band count, plus majority-usage in this batch) — the user's
-        reasoned judgment call, not independently verified against a labeled
-        product image the way P7719/P7717 themselves were. Worth re-checking
-        if this image's calibration behaves oddly later.
-      - `260407_protein_purity.tif`, `4.16.26 Protein Purity.tif` — still
-        **no legible label and no ladder identity**; remains open.
-  - **Important scope note on `daria_data`'s 4 confirmed MWs** (HpyCH4IV
-    29,267 Da; FCE-T7 RNAP fusion 200,717 Da; EcoRI-HF 31,027 Da; BtgZI
-    94,198 Da, all from the email thread): only HpyCH4IV has a matching
-    clean `decodeon_gel_images` file we can actually run through the tool.
-    The other 3 known MWs have no corresponding clean, pipeline-testable
-    image at all — they only exist as `daria_data` screenshots/QC-report
-    images, which aren't valid pipeline input (see Sub-project 1 above).
-    **Net result: full end-to-end purity-accuracy validation currently has
-    exactly one confirmed real test case (HpyCH4IV)** — every other
-    successful calibration in this batch only confirms the calibration
-    *machinery* works, not that the reported purity % is correct.
+    - `260612_ProteinPurity.tif` — CoZyCap Njord, **confirmed MW 202,491.88
+      Da**, ladder **confirmed P7717**
+    - `6.12.26 PDEV1718 Protein Purity.tif` — KasI, **confirmed MW 32,314.44
+      Da**, ladder **inferred P7719** (11 bands, matching P7719's count,
+      plus majority-usage in this batch — the user's reasoned judgment
+      call, not independently verified against a labeled product image the
+      way P7719/P7717 themselves were)
+    - `260407_protein_purity.tif`, `4.16.26 Protein Purity.tif` — still **no
+      legible label and no ladder identity**; remains open.
+  - **Scope note**: `daria_data`'s other 3 confirmed MWs (FCE-T7 RNAP fusion,
+    EcoRI-HF, BtgZI) have no corresponding clean, pipeline-testable image —
+    only HpyCH4IV does. Full end-to-end purity-accuracy validation across
+    this batch has exactly one confirmed real test case; every other
+    successful calibration only confirms the calibration *machinery* works.
+- `data/pptx_tet3_gels/` — added 2026-07-14, extracted from a PowerPoint the
+  user provided (`~/Downloads/7.14.26 TET3 Protein Gels & LabChip Purity.pptx`,
+  not itself committed anywhere). 6 real gel images, each with a **confirmed
+  ground-truth purity % AND confirmed MW written directly on the slide** —
+  the first time this project has had more than one confirmed-purity real
+  test case. Ladder confirmed by the user as **P7719** for all 6. Per-file
+  ground truth:
+  ```
+  R-217_PDEV1405_80pct_58.21874kDa.png       -- R-217 TET3, 80% pure, 58,218.74 Da
+  R-218_PID1385_PDEV1411_69pct_58.21874kDa.png -- R-218, cleaved TET3, 69% pure, 58,218.74 Da
+  R-236_PDEV1452_91pct_53.53519kDa.png       -- R-236, 91% pure, 53,535.19 Da
+  R-236_PDEV1495_91.6pct_53.53519kDa.png     -- R-236 TET3, 91.6% pure, 53,535.19 Da
+  R-244_PDEV1526_87.3pct_57.48889kDa.png     -- R-244 TET3, 87.3% pure, 57,488.89 Da
+  R-236_PID1502_PDEV1580_98.5pct_53.53519kDa.png -- R-236 TET3, 98.5% pure, 53,535.19 Da
+  ```
+  **R-217 and R-218 confirmed by the user to be the same construct family**:
+  R-218 is the cleaved product of R-217, sharing the same confirmed MW — not
+  a labeling error. See Implementation Status for the real end-to-end
+  comparison run against this dataset.
+- `data/curve_tracing_prototype_comparisons/` — added 2026-07-14. 3 rendered
+  PNGs (+ a `README.md`) comparing the curve-tracing prototype's traced lane
+  boundaries against the existing straight-rectangle approach on real
+  images, generated from the `curve-tracing-lane-detection` branch. See
+  Implementation Status's curve-tracing entry for the verdict.
 - `data/decodeon_gel_images/Titers/` — added 2026-07-13. 8 images that are a
   **structurally distinct third category**, not a clean fit for either
   existing workflow: inverted-contrast agarose gels showing a 2-fold enzyme
   dilution series plus `+`/`-` control lanes, used to read a potency/dilution
-  endpoint (classic restriction-enzyme titer assay) rather than a purity % or
-  a per-well active/partial/dead state. Closer in spirit to the activity
-  workflow's core band-pattern problem than to purity, but a 1-D dilution
-  series rather than a plate grid. Whether this becomes a third workflow is
-  an open scope question — see `QUESTIONS_FOR_USERS.md`. One file
-  (`4.16.26 Concentrated Stock Titers.tif`) contains two stacked gel images
-  in a single file, worth noting for ingestion.
+  endpoint rather than a purity % or a per-well active/partial/dead state.
+  Whether this becomes a third workflow is an open scope question — see
+  `QUESTIONS_FOR_USERS.md`. One file (`4.16.26 Concentrated Stock
+  Titers.tif`) contains two stacked gel images in a single file.
 - The `data/` directory is gitignored (see below) — it does not live in version
   control.
 
@@ -937,44 +748,40 @@ Add to it as new questions surface; don't resolve them by guessing.
   architecture, libraries, algorithms, and scope iteratively and explicitly
   with the user rather than inferring intent. When in doubt, ask.
 - **No individual names in committed content, except Jacob's (2026-07-13).**
-  Refer to domain experts, submitters, and reviewers by role (e.g. "the
-  purity project submitter," "a reviewer") rather than by name or email
-  address, in every file that gets committed — docs, code comments, tests,
-  commit messages. Jacob Miller's own name is fine (he's already the git
-  commit author). This was retroactively applied to existing history via
-  `git filter-branch` on 2026-07-13 (safe since nothing had been pushed yet)
-  — see Implementation Status for the redaction details. Apply this rule
-  proactively going forward rather than writing a name and fixing it later.
+  Refer to domain experts, submitters, and reviewers by role rather than by
+  name or email address, in every file that gets committed — docs, code
+  comments, tests, commit messages. Jacob Miller's own name is fine. Apply
+  this proactively going forward rather than writing a name and fixing it
+  later.
 - **Never commit anything secret or proprietary (2026-07-13, scope resolved
-  2026-07-14).** This covers, at minimum: passwords, API keys/tokens,
-  credentials, connection strings, and any other secret in code, docs,
-  config, or test fixtures; login usernames/handles (distinct from the
-  personal-name rule above); and **sequence data, buffer composition, and
-  fermentation/formulation conditions for any protein or construct.**
-  A full-repo + full-history sweep on 2026-07-13 found no secrets/
-  credentials at all. It also found internal `PDEV####`/`PID####` lot codes
-  and construct names (e.g. `R-218`/TET3 fusion, `CL_ASR29`) already
-  committed across `AGENTS.md`/`QUESTIONS_FOR_USERS.md` — flagged to the
-  user for a decision, initially tabled, **resolved 2026-07-14: lot codes
-  and construct names do NOT need to be obfuscated and are fine to commit.**
-  The real, standing red line is sequences/buffer/fermentation/formulation
-  detail specifically — if any of that ever needs to be recorded, stop and
-  ask before committing it rather than assuming it's fine.
+  2026-07-14).** Covers, at minimum: passwords, API keys/tokens, credentials,
+  connection strings, login usernames/handles; and **sequence data, buffer
+  composition, and fermentation/formulation conditions for any protein or
+  construct.** **Resolved 2026-07-14: lot codes (`PDEV####`/`PID####`) and
+  construct/protein/enzyme names (e.g. TET3, R-218, CL_ASR29, KasI) do NOT
+  need to be obfuscated and are fine to commit** — confirmed MW numbers are
+  also fine (physical properties, not formulation secrets). The real,
+  standing red line is sequence/buffer/fermentation/formulation detail
+  specifically — if any of that ever needs to be recorded, stop and ask
+  before committing it rather than assuming it's fine. (A full-repo sweep
+  before pushing to GitHub, plus a second targeted sweep of everything added
+  since, both came back clean — see git history for the audits.)
 - **Current phase: purity workflow implemented and tested; activity workflow
-  not started.** See Implementation Status above. Don't start building the
-  activity workflow until that's explicitly requested — finishing purity
-  doesn't imply a green light to move on automatically.
+  not started.** Don't start building the activity workflow until that's
+  explicitly requested.
 - **Document thoroughly enough to explain the whole system to non-implementing
-  stakeholders later.** Jacob needs to be able to walk the project submitters
-  and reviewers through what was built and why at the end, not just hand them
-  working code. Every Design Decision entry should carry its rationale (the
-  "why"), not just the decision itself — this applies to future edits too,
-  not only what's already written.
-- **Robust testing is required, not optional polish.** See the "Modular,
-  swappable architecture" and "Robust testing" entries in Design Decisions —
-  every pipeline stage needs unit tests, plus integration tests against the
-  real example gel images, plus the dilution-series self-consistency check
-  encoded as an actual automated test.
+  stakeholders later.** Every Design Decision entry should carry its
+  rationale (the "why"), not just the decision itself.
+- **Robust testing is required, not optional polish.** Every pipeline stage
+  needs unit tests, plus integration tests against real example gel images,
+  plus the dilution-series self-consistency check as an actual automated
+  test.
+- **Keep this document itself lean.** Once a topic's *current* state is fully
+  captured by a later entry, trim earlier narrative detail (exact
+  intermediate numbers, reverted-code specifics) rather than layering a new
+  entry on top indefinitely — git history preserves the full detail if ever
+  needed again. Never trim a decision's rationale or a "don't retry X"
+  warning, only the superseded blow-by-blow around it.
 
 ## Architecture Diagram
 
@@ -1000,25 +807,30 @@ clearly equivalent, treat it as shorthand for: refresh persistent memory,
 diagram (both `diagrams/program-flow.mmd` and the re-rendered
 `diagrams/program-flow.png`) to reflect what's actually been decided/built
 since they were last updated. Re-render the PNG any time the `.mmd` changes —
-don't let them drift out of sync.
+don't let them drift out of sync. **Also use this as a prompt to trim cruft**
+(see Working Agreements' "keep this document lean" entry) — stale interim
+numbers and superseded narrative detail, not decisions or warnings.
 
 ## Repo Infrastructure Notes
 
-- `.gitignore` was cleaned up from the GitHub-generated Python default (which
-  included a lot of irrelevant boilerplate — Django, Flask, Scrapy, Celery,
-  RabbitMQ, Streamlit, etc.) down to what's actually relevant: Python
-  build/cache artifacts, virtual envs, `.idea/` (JetBrains), standard macOS
-  junk files, and the `data/` directory.
-- Language/framework/dependency tooling is now decided and implemented — see
-  the "Tech stack" entry in Design Decisions (Python 3.11+,
-  numpy/scipy/scikit-image, argparse, pyproject.toml + uv, pytest) and
-  "Implementation Status" for the actual package layout (`src/gel_extractor/`,
-  `tests/`, `pyproject.toml`, `uv.lock`).
-- **`scripts/` is gitignored (2026-07-14)** — local dev/debug tooling only,
-  not shipped with the package. `scripts/generate_debug_images.py` runs
-  every real Protein Purity example image (with its confirmed target MW from
-  Data Inventory where known, `--allow-heuristic` otherwise) through
-  `gelx purity analyze --debug`, writing annotated images to
-  `data/debug_images/` (renamed from `data/debug images/` the same day) —
-  a quick way to eyeball lane/band detection across the whole example set
-  after a pipeline change, not a substitute for the automated test suite.
+- `.gitignore` was cleaned up from the GitHub-generated Python default down
+  to what's actually relevant: Python build/cache artifacts, virtual envs,
+  `.idea/` (JetBrains), standard macOS junk files, the `data/` directory,
+  `scripts/` (local dev tooling), and `.claude/` (Claude Code's own local
+  settings/worktree state — added 2026-07-14 after it briefly showed up as
+  untracked).
+- Language/framework/dependency tooling: Python 3.11+, numpy/scipy/scikit-
+  image, argparse, pyproject.toml + uv, pytest — see Design Decisions'
+  "Tech stack" entry and Implementation Status for the actual layout.
+- **`scripts/` is gitignored** — local dev/debug tooling only, not shipped
+  with the package. `scripts/generate_debug_images.py` runs every real
+  example image (with its confirmed target MW from Data Inventory where
+  known, `--allow-heuristic` otherwise) through `gelx purity analyze
+  --debug`, writing annotated images to `data/debug_images/` — a quick way
+  to eyeball lane/band detection across the whole example set after a
+  pipeline change, not a substitute for the automated test suite.
+- **Experimental work happens on separate branches, not `main`.** The
+  curve-tracing prototype (2026-07-14) lives entirely on branch
+  `curve-tracing-lane-detection`, built via an isolated git worktree so it
+  could proceed in parallel with `main`-branch work without any risk of
+  collision. Not merged — see Implementation Status for why.

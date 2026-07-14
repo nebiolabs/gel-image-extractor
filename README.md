@@ -6,13 +6,37 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (47 tests, all passing).
+**Purity workflow: implemented and tested** (51 tests, all passing).
 **Activity workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
 "Known Limitations" section tracking open issues that shouldn't be silently
 fixed or forgotten. `diagrams/program-flow.png` (or the `.mmd` source) has
 the current architecture sketch.
+
+### MVP scope — read this before trusting a number
+
+- **This release covers the purity workflow only.** Activity/titer gel
+  classification is a separate, not-yet-built workflow — out of scope here.
+- **Treat every purity % as a first-pass estimate a human should verify, not
+  an authoritative result.** Lane detection assumes each lane is a straight
+  vertical rectangle; real gels can curve ("smiling") or have adjacent lanes
+  bleed together near the loading wells, and the current pipeline doesn't
+  correct for either. Real accuracy checks against confirmed ground truth
+  found some images matching within a few points and others off by a large
+  margin (see `AGENTS.md` Implementation Status) — the gap is driven by
+  lane-detection error, not the purity math itself.
+- **Always run with `--debug [PATH]` and look at the annotated image before
+  reporting a number.** It draws every detected lane and band box directly
+  on the gel photo — if a lane box looks wrong (split, merged, or offset
+  from the real band), don't trust that lane's purity % without a manual
+  recheck. This takes under a minute per image and is the single best
+  safeguard this tool currently has.
+- Results are also flagged automatically where the tool itself has lower
+  confidence: `not-found` (no usable signal), `heuristic` (no MW match, best
+  guess only), and `low_signal` (likely high-dilution, purity may be
+  inflated) — treat all three as needing extra scrutiny, not just ignoring
+  them.
 
 ```
 uv sync
@@ -94,42 +118,33 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 47 tests, all passing.
+  currently has 51 tests, all passing.
 - **Reporting precision:** `purity_percent` rounds to the nearest whole
   percent (not 1 decimal) — deliberately, given the pipeline's known
   real-world imprecision.
 - **`--debug [PATH]` writes an annotated debug image** showing detected lane
-  boxes (blue = ladder, amber = sample), band boxes (green = target/matched,
-  red = other/contaminant), and per-lane purity/MW labels — built for both
-  debugging the pipeline and helping an end user see how a result was
-  reached, not a separate internal-only tool. See `AGENTS.md`'s
-  Implementation Status for a real example of what it surfaced.
-- **Lane vertical bounds are now adaptive, not a fixed top-margin crop** —
-  the loading-well "comb" fringe (which varies lane to lane) and a bottom
-  cassette/tape-edge artifact (consistent across every lane) are both
-  detected per-image rather than assumed. This also fixed a real
-  cross-lane coordinate-frame bug in MW calibration found while validating
-  it — see `AGENTS.md`'s Implementation Status for the full story.
-- Running this against real images surfaced some non-obvious findings (a
-  data file that's actually a screenshot with UI chrome, real gel photos not
-  being on a white background, a band-detection noise-robustness gap on
-  faint lanes — now fixed, a ladder-calibration approach that had to stop
-  assuming a fixed direction for missing bands — now fixed, a ladder-lane
-  noise threshold that was too strict for several genuinely faint-but-real
-  scans — now fixed, bringing successful calibration from 6/11 to 10/11 real
-  example images, and a confirmed, still-unmitigated limitation where high
-  dilution inflates apparent purity by making contaminant bands undetectable
-  before the target band) — see `AGENTS.md`'s "Implementation Status" and
-  "Known Limitations" sections for the full detail.
-- **Only one real image has both a clean testable file and a confirmed
-  target MW** (HpyCH4IV) — every other successful calibration only confirms
-  the calibration *machinery* works, not that the reported purity % is
-  correct. Getting more confirmed MWs is tracked in `QUESTIONS_FOR_USERS.md`.
-- **Purity calculation is confirmed to stay a direct single-lane
-  densitometric ratio** (target band area / total lane area, calibrated
-  against one ladder), not a comparison/bracketing against reference lanes —
-  even though that's closer to current manual practice per end-user input.
-  Deliberate choice, see `AGENTS.md`.
+  boxes, band boxes (green = target/matched, red = other/contaminant), and
+  per-lane purity/MW labels — built for both pipeline debugging and helping
+  an end user see how a result was reached. **Always check this before
+  trusting a number** — see the MVP scope note above.
+- **Lane vertical bounds (comb fringe, bottom cassette artifact) are
+  adaptive**; horizontal lane *fragmentation* has a validated partial fix.
+  Gel smiling/curvature and bleed-over between wide/diffuse bands remain
+  unaddressed — a curve-tracing prototype was explored on a separate branch
+  (`curve-tracing-lane-detection`) and showed real promise on clean gels but
+  didn't fix the worst real over-segmentation case; not merged. See
+  `AGENTS.md`'s Implementation Status and Known Limitations for the full
+  history, findings, and confirmed dead ends (don't re-attempt those
+  without reading why they failed first).
+- **7 real images have a confirmed ground-truth purity % *and* MW**
+  (`data/pptx_tet3_gels/` + HpyCH4IV) — every other successful calibration
+  only confirms the calibration *machinery* works, not that the reported
+  purity % is correct. More confirmed MWs are tracked in
+  `QUESTIONS_FOR_USERS.md`.
+- **Purity calculation is a direct single-lane densitometric ratio**
+  (target band area / total lane area, calibrated against one ladder), not a
+  comparison/bracketing against reference lanes — a deliberate choice, see
+  `AGENTS.md`.
 - No git actions (commit/push) happen without explicit user consent — see
   `AGENTS.md`'s "Working Agreements".
 - Open questions that need a domain expert's input (not just an engineering

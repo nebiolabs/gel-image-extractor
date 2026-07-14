@@ -150,7 +150,7 @@ def _run_analyze(args: argparse.Namespace) -> int:
             tolerance_percent=args.mw_tolerance,
             allow_heuristic=args.allow_heuristic,
         )
-    except (LadderNotCalibratedError, ValueError) as exc:
+    except (LadderNotCalibratedError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -165,8 +165,12 @@ def _run_analyze(args: argparse.Namespace) -> int:
 
     if args.debug is not None:
         debug_path = args.debug or str(Path(args.image).with_name(Path(args.image).stem + "_debug.png"))
-        raw_image = load_image(args.image)
-        save_debug_image(raw_image, results, debug_info, debug_path)
+        try:
+            raw_image = load_image(args.image)
+            save_debug_image(raw_image, results, debug_info, debug_path)
+        except OSError as exc:
+            print(f"error: could not write debug image to {debug_path!r}: {exc}", file=sys.stderr)
+            return 1
         print(f"Debug image written to {debug_path}")
 
     return 0

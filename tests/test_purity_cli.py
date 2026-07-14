@@ -127,3 +127,35 @@ def test_cli_analyze_errors_without_ladder_info(tmp_path, synthetic_gel, capsys)
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "error:" in captured.err
+
+
+def test_cli_analyze_errors_cleanly_on_missing_image(tmp_path, capsys):
+    # A nonexistent/unreadable image file must print a clean one-line error,
+    # not a raw traceback -- see AGENTS.md/README's MVP-polish notes (2026-07-14).
+    missing_path = tmp_path / "does_not_exist.tif"
+
+    exit_code = main(["purity", "analyze", str(missing_path), "--target-mw", "25", "--allow-heuristic"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_cli_analyze_errors_cleanly_on_unwritable_debug_path(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+    bad_debug_path = tmp_path / "no_such_subdir" / "out.png"
+
+    exit_code = main(
+        [
+            "purity", "analyze", str(path),
+            "--target-mw", "25", "--ladder-bands", ladder_bands_arg,
+            "--debug", str(bad_debug_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.err
