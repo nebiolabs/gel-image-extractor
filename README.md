@@ -14,6 +14,30 @@ inventory, working agreements, design decisions, implementation notes
 fixed or forgotten. `diagrams/program-flow.png` (or the `.mmd` source) has
 the current architecture sketch.
 
+### MVP scope — read this before trusting a number
+
+- **This release covers the purity workflow only.** Activity/titer gel
+  classification is a separate, not-yet-built workflow — out of scope here.
+- **Treat every purity % as a first-pass estimate a human should verify, not
+  an authoritative result.** Lane detection assumes each lane is a straight
+  vertical rectangle; real gels can curve ("smiling") or have adjacent lanes
+  bleed together near the loading wells, and the current pipeline doesn't
+  correct for either. Real accuracy checks against confirmed ground truth
+  found some images matching within a few points and others off by a large
+  margin (see `AGENTS.md` Implementation Status) — the gap is driven by
+  lane-detection error, not the purity math itself.
+- **Always run with `--debug [PATH]` and look at the annotated image before
+  reporting a number.** It draws every detected lane and band box directly
+  on the gel photo — if a lane box looks wrong (split, merged, or offset
+  from the real band), don't trust that lane's purity % without a manual
+  recheck. This takes under a minute per image and is the single best
+  safeguard this tool currently has.
+- Results are also flagged automatically where the tool itself has lower
+  confidence: `not-found` (no usable signal), `heuristic` (no MW match, best
+  guess only), and `low_signal` (likely high-dilution, purity may be
+  inflated) — treat all three as needing extra scrutiny, not just ignoring
+  them.
+
 ```
 uv sync
 uv run gelx purity analyze "data/decodeon_gel_images/Protein Purity/8.6.25 Protein Purity.tif" \

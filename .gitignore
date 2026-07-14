@@ -4,6 +4,9 @@ data/
 # Local dev/debug scripts — not committed to the repo
 scripts/
 
+# Claude Code local tooling state (settings, worktrees) — not committed
+.claude/
+
 # JetBrains IDE
 .idea/
 
