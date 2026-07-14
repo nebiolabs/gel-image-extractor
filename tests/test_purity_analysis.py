@@ -147,3 +147,37 @@ def test_analyze_image_end_to_end_with_ladder_bands(tmp_path, synthetic_gel):
     assert sample_debug.is_ladder is False
     assert len(sample_debug.bands) == 2  # target + contaminant
     assert len(sample_debug.target_bands) == 1  # only the target band matched
+
+
+def test_analyze_image_flags_faint_lane_as_low_signal(tmp_path, synthetic_gel):
+    # A dilution series: one well-loaded lane, one much fainter one (as if
+    # highly diluted). The faint lane's purity reading may be inflated by
+    # the dilution-detectability limit (see AGENTS.md Known Limitations) --
+    # it should come back flagged low_signal, the strong lane should not.
+    height = 300
+    top_margin = int(height * 0.05)
+    slope, intercept = -0.01, 2.3
+    known_mws = [100.0, 50.0, 25.0, 12.5, 6.25]
+
+    def post_crop_pos(mw: float) -> float:
+        return (intercept - np.log10(mw)) / -slope
+
+    ladder_bands = [(post_crop_pos(mw) + top_margin, 0.7) for mw in known_mws]
+    target_mw = 25.0
+    target_pos = post_crop_pos(target_mw) + top_margin
+
+    strong_lane = [(target_pos, 0.6), (280, 0.3)]
+    faint_lane = [(target_pos, 0.12)]
+
+    image = synthetic_gel(height=height, band_specs=[ladder_bands, strong_lane, faint_lane])
+    path = tmp_path / "gel.png"
+    imsave(str(path), (image * 255).astype("uint8"))
+
+    results, _ladder_lane_index, _debug_info = analyze_image(
+        str(path), target_mw=target_mw, ladder_bands=known_mws, tolerance_percent=17.5
+    )
+
+    assert len(results) == 2
+    strong_result, faint_result = results
+    assert strong_result.low_signal is False
+    assert faint_result.low_signal is True

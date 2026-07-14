@@ -21,7 +21,12 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
             "Auto-detects lanes in a gel image, calibrates the ladder lane "
             "against known band sizes, identifies the target protein band by "
             "molecular weight, and reports purity % (target band area / "
-            "total lane area) for each sample lane."
+            "total lane area) for each sample lane. A lane whose total "
+            "detected signal is faint relative to the most-concentrated "
+            "lane in the image (e.g. a highly-diluted sample) is flagged "
+            "'low signal' -- its purity % may be inflated by faint "
+            "contaminant bands dropping below the detection floor before "
+            "the target band does."
         ),
     )
     analyze_parser.add_argument("image", help="Path to the gel image file (TIFF, PNG, or JPG).")

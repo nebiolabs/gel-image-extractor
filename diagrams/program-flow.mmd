@@ -1,12 +1,12 @@
 %% program-flow.mmd
 %% NOTE: Reflects the purity workflow as actually implemented and tested
-%% (src/gel_extractor/, 45 tests passing) plus the activity workflow's
+%% (src/gel_extractor/, 47 tests passing) plus the activity workflow's
 %% still-conceptual design (see AGENTS.md "Design Decisions" and
 %% "Implementation Status"). Not a full class/sequence diagram -- still a
 %% data-flow sketch, just one grounded in working code on the purity side.
 
 flowchart TD
-    Note["✅ Purity: implemented & tested (45 tests)<br/>⚠ Activity: conceptual only, not built<br/>see AGENTS.md Implementation Status<br/>+ Known Limitations"]
+    Note["✅ Purity: implemented & tested (47 tests)<br/>⚠ Activity: conceptual only, not built<br/>see AGENTS.md Implementation Status<br/>+ Known Limitations"]
 
     Input["Gel image input<br/>(TIFF / PNG / JPG)"]
 
@@ -29,7 +29,8 @@ flowchart TD
         Heuristic["--allow-heuristic:<br/>fallback to largest band<br/>(flagged low-confidence)"]
         ErrorOut["Error: cannot calibrate ladder --<br/>requires --ladder-bands or<br/>--allow-heuristic"]
         PurityCalc["purity % =<br/>target band area / total lane area"]
-        LaneResult["LaneResult data model<br/>(lane, purity_percent, confidence,<br/>target_mw_expected, matched_band_mw)"]
+        LaneResult["LaneResult data model<br/>(lane, purity_percent, confidence,<br/>target_mw_expected, matched_band_mw,<br/>low_signal)"]
+        LowSignalFlag["Cross-lane comparison (whole image):<br/>flag lanes whose total detected signal<br/>is under 20% of the most-concentrated<br/>lane -- low_signal = true (placeholder<br/>threshold; likely high-dilution lane,<br/>purity % may be inflated)"]
         TableOut["Table (default, stdout)"]
         CsvOut["--csv [PATH]"]
         JsonOut["--json [PATH]"]
@@ -64,9 +65,10 @@ flowchart TD
     AnyBandsUncal -- yes --> Heuristic
     LadderCal -- "no, no flag given" --> ErrorOut
     PurityCalc --> LaneResult
-    LaneResult --> TableOut
-    LaneResult --> CsvOut
-    LaneResult --> JsonOut
-    LaneResult --> DebugOut
+    LaneResult --> LowSignalFlag
+    LowSignalFlag --> TableOut
+    LowSignalFlag --> CsvOut
+    LowSignalFlag --> JsonOut
+    LowSignalFlag --> DebugOut
     GridDet --> Baseline --> Classify --> Heatmap
     Baseline -.-> ExpectedFrag -.-> Classify

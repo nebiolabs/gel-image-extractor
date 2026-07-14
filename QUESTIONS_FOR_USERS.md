@@ -39,42 +39,58 @@ outside domain knowledge or a business/scope call.
   sources alone couldn't confirm the individual list). Now seeded in
   `core.ladder.KNOWN_LADDERS["P7719"]`; `--ladder P7719` works as a real
   option.
-- [ ] **Which ladder(s) do these assays actually use — is it always the same
+- [x] **Which ladder(s) do these assays actually use — is it always the same
   one, or does it vary by team/assay/scientist?** Broadened 2026-07-13 from
-  the narrower P7719-band-values question above (now resolved). Still open:
-  - *Purity:* is P7719 the de facto standard for most protein purity gels at
-    NEB? If so, we could default `--ladder` to it and only require the flag
-    when a different ladder was actually used, reducing the common-case CLI
-    input down to just `--target-mw`. Several purity examples we have use
-    P7719, but we don't know if that's representative or coincidental.
-  - *Activity/titer:* the SfiI dataset documents "1kb+" as the DNA ladder
-    used; TfiI and the Titers dataset don't have a recorded ladder identity
-    that we've confirmed — is it the same ladder across all restriction/
-    activity work, or does it vary by assay?
-  *(Raised 2026-07-13, broadened same day while starting purity workflow
-  implementation.)*
-- [ ] **How should we handle low-contrast/washed-out source gel scans**
+  the narrower P7719-band-values question above (now resolved). **ANSWERED
+  2026-07-14:**
+  - *Purity:* varies by team/scientist — at least 2 different ladders are in
+    use within the user's own group. They're willing to standardize within
+    their team, but which ladder to standardize on is a separate decision
+    still pending internally (not necessarily P7719). Practical implication:
+    `--ladder`/`--ladder-bands` needs to keep supporting more than one real
+    ladder, not just default to P7719 as originally floated. A second real
+    ladder, **P7717**, was confirmed and seeded the same day (see below) —
+    13 bands: 200, 150, 100, 85, 70, 60, 50, 40, 30, 25, 20, 15, 10 kDa.
+  - *Activity/titer:* always **N0550** (a DNA fragment-size ladder, kb not
+    kDa — distinct from the protein MW ladders above; not yet wired into
+    any code since the activity/titer workflow isn't built). Not confirmed
+    whether other teams also use N0550. Full 19-band list (kb / mass ng):
+    10.0/40, 8.0/40, 6.0/48, 5.0/40, 4.0/32, 3.0/120, 2.0/40, 1.5/57,
+    1.2/45, 1.0/122, 0.9/34, 0.8/31, 0.7/27, 0.6/23, 0.5/124, 0.4/49,
+    0.3/37, 0.2/32, 0.1/61 (bold-in-source bands are the mass reference
+    bands: 3.0/1.0/0.5 kb).
+- [x] **How should we handle low-contrast/washed-out source gel scans**
   (e.g. `260407_protein_purity.tif`, `4.16.26 Protein Purity.tif` in
-  `decodeon_gel_images/Protein Purity/`)? Is that scan quality typical/
-  acceptable in practice, or should we expect (and design for) better source
-  image quality? *(Raised 2026-07-13.)*
-- [ ] **Are the embedded purity-standard-ladder gels still commonly produced**
+  `decodeon_gel_images/Protein Purity/`)? **ANSWERED 2026-07-14:** caused by
+  an old Coomassie-type stain the user's team discontinued using ~2025-12 —
+  scans from that point forward should look better. Not a scan-technique or
+  tool-design issue to solve for; just expect the older images in this
+  dataset to skew low-contrast.
+- [x] **Are the embedded purity-standard-ladder gels still commonly produced**
   (the EcoRI-HF/BtgZI QC-report format with 50/75/88/94/97/98/99% reference
   lanes), or is the plain ladder + dilution-series format — seen in all 11
   of the newly added example images, with zero examples of the standards
-  format — the more realistic default going forward? *(Raised 2026-07-13.)*
-- [ ] **How should the tool handle the dilution-detectability limit?**
+  format — the more realistic default going forward? **ANSWERED 2026-07-14:**
+  not typically produced — ladder + dilution series is the real-world norm.
+  The user's team could add embedded reference lanes to future gels if the
+  tool ever needed them, but there's no current design reason to require it.
+- [x] **How should the tool handle the dilution-detectability limit?**
   Confirmed 2026-07-13 (user validated this as a real, expected concern, not
   just a detection-parameter artifact): at some dilution level, faint
   contaminant bands become undetectable before the target band does, which
   systematically inflates apparent purity in the more-dilute lanes of a
-  series (observed 29% → 48% across one real dilution series). Should the
-  tool (a) flag low-total-signal lanes as lower-confidence rather than
-  reporting them at face value, (b) default to treating the most-
-  concentrated ("Total") lane as the single authoritative measurement rather
-  than reporting/aggregating across the whole dilution series, (c) something
-  else, or (d) is there a recommended dilution range end users already use
-  in practice to avoid this? *(Raised 2026-07-13.)*
+  series (observed 29% → 48% across one real dilution series). **DECIDED
+  2026-07-14:** flag low-total-signal lanes as lower-confidence rather than
+  silently reporting them at face value (option (a) from the original list;
+  (b)/(c)/(d) not pursued). **Implemented same day**: `LaneResult.low_signal`
+  is `True` when a lane's total detected band area is under 20% (placeholder,
+  unvalidated threshold — `DEFAULT_LOW_SIGNAL_FRACTION`) of the most-
+  concentrated lane in the same image; surfaced as a "Flag" column in the
+  table, a `low_signal` field in CSV/JSON, and a "low-sig" suffix in
+  `--debug` labels. This doesn't fix the underlying limit-of-detection
+  effect (there isn't a fix), it just stops an inflated reading from being
+  presented with the same confidence as a well-loaded lane. See `AGENTS.md`
+  Implementation Status for detail.
 - [x] **Need confirmed molecular weights for proteins identified (by visible
   in-image label) in `decodeon_gel_images/Protein Purity/`** — **RESOLVED
   2026-07-13.** User provided confirmed MWs:
@@ -98,12 +114,24 @@ outside domain knowledge or a business/scope call.
   (see Known Limitations) rather than a target-MW problem — under
   investigation.
 
-  Separately, 4 images still have **no legible protein label at all** —
-  identity unknown, not just MW: `6.12.26 PDEV1718 Protein Purity.tif`,
+  Separately, 4 images had **no legible protein label at all** — identity
+  unknown, not just MW: `6.12.26 PDEV1718 Protein Purity.tif`,
   `260612_ProteinPurity.tif`, `260407_protein_purity.tif`,
-  `4.16.26 Protein Purity.tif`. *(Raised 2026-07-13 — see `AGENTS.md` Data
-  Inventory for the full per-file breakdown, including which file shows
-  which label.)*
+  `4.16.26 Protein Purity.tif`. *(Raised 2026-07-13.)* **2 of the 4 resolved
+  2026-07-14:**
+  - `260612_ProteinPurity.tif` — **CoZyCap Njord, 202,491.88 Da (202.492
+    kDa)**, ladder **P7717** (independently confirmed by the user, band
+    list now seeded — see the ladder question above).
+  - `6.12.26 PDEV1718 Protein Purity.tif` — **KasI, 32,314.44 Da (32.314
+    kDa)**, ladder inferred as **P7719** by the user (11 bands visible in
+    the image, matching P7719's known band count, plus "most other gels in
+    this batch use P7719") — a reasoned judgment call, not independently
+    confirmed the way P7719/P7717's own band lists were verified against
+    NEB product images. Flagging that distinction so it isn't mistaken for
+    the same certainty later.
+
+  `260407_protein_purity.tif` and `4.16.26 Protein Purity.tif` still have
+  **no legible label and no ladder identity** — remains open.
 
 ## Activity workflow
 
@@ -127,9 +155,9 @@ outside domain knowledge or a business/scope call.
 
 ---
 
-*Last updated: 2026-07-13 (P7719 band-size question resolved; dilution-
-detectability-limit question added after user confirmed it as a real
-concern; protein-MW question added after per-file identity investigation.
-See `AGENTS.md` "Known Limitations" for open engineering items that don't
-need end-user input). See `AGENTS.md` for full design context behind these
-questions.*
+*Last updated: 2026-07-14 (ladder-standardization, low-contrast-scan-cause,
+embedded-standards, and dilution-detectability-handling questions all
+answered/decided; P7717 and N0550 ladder band lists obtained; 2 of the 4
+unlabeled images identified. See `AGENTS.md` "Known Limitations" for open
+engineering items that don't need end-user input). See `AGENTS.md` for full
+design context behind these questions.*

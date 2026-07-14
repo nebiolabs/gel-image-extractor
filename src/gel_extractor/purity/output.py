@@ -13,7 +13,7 @@ from pathlib import Path
 
 from gel_extractor.purity.analysis import LaneResult
 
-FIELDS = ["lane", "purity_percent", "confidence", "target_mw_expected", "matched_band_mw"]
+FIELDS = ["lane", "purity_percent", "confidence", "target_mw_expected", "matched_band_mw", "low_signal"]
 
 
 def to_records(results: list[LaneResult]) -> list[dict]:
@@ -24,6 +24,7 @@ def to_records(results: list[LaneResult]) -> list[dict]:
             "confidence": r.confidence,
             "target_mw_expected": r.target_mw_expected,
             "matched_band_mw": r.matched_band_mw,
+            "low_signal": r.low_signal,
         }
         for r in results
     ]
@@ -33,18 +34,19 @@ def format_table(results: list[LaneResult], ladder_lane_index: int) -> str:
     total_lanes = len(results) + 1
     header = f"Ladder detected in lane {ladder_lane_index + 1} of {total_lanes} total lanes."
 
-    col = {"lane": 4, "purity": 10, "confidence": 12, "mw": 12}
+    col = {"lane": 4, "purity": 10, "confidence": 12, "mw": 12, "flag": 11}
     title_row = (
         f"{'Lane':>{col['lane']}}  {'Purity %':>{col['purity']}}  "
-        f"{'Confidence':<{col['confidence']}}  {'Matched MW':>{col['mw']}}"
+        f"{'Confidence':<{col['confidence']}}  {'Matched MW':>{col['mw']}}  {'Flag':<{col['flag']}}"
     )
     rows = [title_row]
     for r in results:
         purity = f"{r.purity_percent:d}" if r.purity_percent is not None else "n/a"
         matched_mw = f"{r.matched_band_mw:.1f}" if r.matched_band_mw is not None else "n/a"
+        flag = "low signal" if r.low_signal else ""
         rows.append(
             f"{r.lane:>{col['lane']}}  {purity:>{col['purity']}}  "
-            f"{r.confidence:<{col['confidence']}}  {matched_mw:>{col['mw']}}"
+            f"{r.confidence:<{col['confidence']}}  {matched_mw:>{col['mw']}}  {flag:<{col['flag']}}"
         )
     return header + "\n" + "\n".join(rows)
 

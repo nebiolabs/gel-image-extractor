@@ -98,7 +98,8 @@ def _lane_label(lane_info, results_by_lane: dict[int, LaneResult]) -> str:
         return f"L{lane_info.lane}: not-found"
     purity = f"{result.purity_percent}%" if result.purity_percent is not None else "n/a"
     mw = f"{result.matched_band_mw:.1f}kDa" if result.matched_band_mw is not None else "n/a"
-    return f"L{lane_info.lane}: {purity} ({mw})"
+    flag = " low-sig" if result.low_signal else ""
+    return f"L{lane_info.lane}: {purity} ({mw}){flag}"
 
 
 def _draw_ladder_calibration(draw: ImageDraw.ImageDraw, debug_info: AnalysisDebugInfo) -> None:

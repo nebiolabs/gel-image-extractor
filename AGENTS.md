@@ -199,10 +199,13 @@ without cause:
   unrecognized ladder) directly on the command line. Realistic burden in the
   common case: 1-2 flags per run, both values the scientist already has to
   know to interpret the gel by eye today, so this isn't new work for them —
-  just typed input instead of an inferred/looked-up value. Possible future
-  convenience (not yet decided — tracked in `QUESTIONS_FOR_USERS.md`):
-  defaulting `--ladder` to a common ladder (e.g. P7719) if it turns out to be
-  the de facto standard, dropping the common case to just `--target-mw`.
+  just typed input instead of an inferred/looked-up value. **Answered
+  2026-07-14, closing the "default --ladder" idea above**: ladder choice
+  genuinely varies by team/scientist (at least 2 in use within the user's
+  own group) — there's no single de facto standard to default to. The user's
+  team is open to standardizing internally, but which ladder is a separate,
+  still-pending decision. Keep `--ladder`/`--ladder-bands` as an explicit,
+  required-ish input rather than adding a silent default.
 - **Activity workflow classification will be baseline-relative, not
   substrate-aware, for the core active/partial/dead call (decided
   2026-07-13).** Every example experiment batch (both SfiI and TfiI) includes
@@ -327,6 +330,15 @@ same day design finished, so no date-of-completion note beyond "2026-07-13").
   sources alone couldn't confirm the individual band list, but the labeled
   image resolved it. `--ladder P7719` now works as a real named option, not
   just a placeholder.
+- **`KNOWN_LADDERS["P7717"]` seeded and verified (2026-07-14)**, the same way
+  — `[200, 150, 100, 85, 70, 60, 50, 40, 30, 25, 20, 15, 10]` kDa, 13 bands,
+  read directly off NEB's own labeled product gel image (user-provided). This
+  came up because `260612_ProteinPurity.tif`'s ladder is confirmed as P7717,
+  not P7719 — see Data Inventory. Ran the real image through
+  `gelx purity analyze --ladder P7717 --target-mw 202.49188`: all 4 sample
+  lanes calibrate (`mw-matched`), matched MWs land 167-180 kDa vs. the
+  confirmed 202.5 kDa target — inside the 20% tolerance (so it matches), but
+  a real, useful accuracy data point, not a clean validation win.
 - **`--help` gotcha fixed:** argparse only expands `%%` → `%` in per-argument
   `help=` text, not in a parser's `description=` — a literal `%%` was
   showing up in `gelx purity analyze --help` until this was caught by
@@ -438,12 +450,11 @@ they're non-obvious and expensive to rediscover:
   before the target band does, inflating the computed ratio** — not
   primarily a detection-parameter bug, but a fundamental limit-of-detection
   effect that any densitometry approach will face. This affects both
-  `heuristic` and `mw-matched` confidence modes. Not yet mitigated — see
-  Known Limitations below; also raised as a new question for end users
-  (`QUESTIONS_FOR_USERS.md`) about whether there's a recommended dilution
-  range or whether the most-concentrated ("Total") lane should be treated
-  as the authoritative measurement rather than aggregating across the whole
-  series.
+  `heuristic` and `mw-matched` confidence modes. **Decided and implemented
+  2026-07-14** — see the dedicated Implementation Status entry below and
+  `QUESTIONS_FOR_USERS.md`: the underlying limit-of-detection effect itself
+  isn't fixable, but low-signal lanes are now flagged rather than reported
+  at face value with no signal of reduced confidence.
 - **Real end-to-end accuracy test against 5 newly-confirmed MWs
   (2026-07-13) found real failures, not a validation win.** Ran
   `gelx purity analyze` with each confirmed MW (Esp3I, IdeS Protease, TelA,
@@ -694,6 +705,30 @@ they're non-obvious and expensive to rediscover:
     below -- a genuinely blank/degenerate real sample lane would hit the same
     code path and should get the same honest result.
   - 45 tests total, all passing.
+- **`LaneResult.low_signal` flag added (2026-07-14), implementing the
+  dilution-detectability decision above** (option (a) from
+  `QUESTIONS_FOR_USERS.md`: flag low-total-signal lanes as lower-confidence
+  rather than reporting them at face value; the user explicitly asked for
+  this to be built now, not deferred). `analyze_image` compares each sample
+  lane's total detected band area against the most-concentrated lane in the
+  same image; a lane under `DEFAULT_LOW_SIGNAL_FRACTION` (20%, placeholder,
+  not yet empirically tuned) of that maximum gets `low_signal=True`. This is
+  necessarily a whole-image, cross-lane comparison -- `analyze_lane()` called
+  standalone has no other lane to compare against and always leaves it
+  `False`; only `analyze_image` can set it. Surfaced everywhere a result
+  reaches an end user: a "Flag" column in the table (`"low signal"` text), a
+  `low_signal` key in CSV/JSON, and a `" low-sig"` suffix on `--debug` lane
+  labels. Only applies when `purity_percent` is not `None` -- a lane with
+  literally zero bands is already `not-found` (see the zero-bands fix
+  above), which already conveys "no usable signal" on its own.
+  **Validated against the real HpyCH4IV dilution series**: lanes 5-8 (the
+  higher, likely dilution-inflated purity readings, 77-82%) got flagged;
+  lane 9 (lower, 65%, presumably less dilute) didn't; lane 10 (already
+  `not-found`) is unaffected. This doesn't fix the underlying limit-of-
+  detection effect -- there isn't a fix, the information genuinely isn't in
+  the image below some dilution -- it just stops an inflated reading from
+  being presented with the same confidence as a well-loaded lane. 47 tests
+  total, all passing.
 
 ## Planned Features — Not Yet Built
 
@@ -729,17 +764,20 @@ recorded here specifically so they aren't lost or re-litigated from scratch.
   which is promising but has an unresolved regression to root-cause first
   (explicit gel-edge trimming).
 - **Dilution-detectability threshold skews purity at high dilution —
-  confirmed real, not yet mitigated.** As dilution increases, faint
-  contaminant bands drop below the detection floor before the target band
-  does, inflating apparent purity (observed in both `heuristic` and
-  `mw-matched` modes: 29% → 48% across one real dilution series). The user
-  confirmed this is an expected, real phenomenon (a fundamental limit-of-
-  detection effect, not primarily a tunable-parameter bug), so it shouldn't
-  be "fixed" by further threshold tuning alone. Needs a design decision:
-  e.g. flag low-total-signal lanes as lower-confidence, recommend/default to
-  the most-concentrated ("Total") lane as the authoritative measurement
-  rather than aggregating across the whole dilution series, or something
-  else — tracked as a new question for end users in `QUESTIONS_FOR_USERS.md`.
+  confirmed real, partially mitigated 2026-07-14, not fixable outright.** As
+  dilution increases, faint contaminant bands drop below the detection floor
+  before the target band does, inflating apparent purity (observed in both
+  `heuristic` and `mw-matched` modes: 29% → 48% across one real dilution
+  series). The user confirmed this is an expected, real phenomenon (a
+  fundamental limit-of-detection effect, not primarily a tunable-parameter
+  bug) — there's no code fix for the effect itself, the information genuinely
+  isn't in the image below some dilution. **Decided and implemented**: flag
+  low-total-signal lanes as lower-confidence (`LaneResult.low_signal`, see
+  Implementation Status) rather than reporting them at face value. Still
+  open: the flagging threshold (`DEFAULT_LOW_SIGNAL_FRACTION = 0.2`) is an
+  unvalidated placeholder, and the user's other floated idea (defaulting to
+  the most-concentrated lane as the sole authoritative measurement) wasn't
+  pursued — revisit if the flag alone doesn't feel sufficient in practice.
 
 ## Open Questions
 
@@ -779,6 +817,23 @@ rather than guessing.
   - Every timepoint has a plain + `_unlabeled` image pair (identical pixel
     content minus the burned-in well-number text/caption) — the unlabeled
     version is likely preferable for automated segmentation.
+  - **Ladder confirmed 2026-07-14: N0550**, always, across activity/titer
+    work (not confirmed whether other teams also use it). This is a **DNA
+    fragment-size ladder (kb, not kDa)** — a different unit and a different
+    kind of gel (agarose, not SDS-PAGE) from the purity workflow's protein
+    MW ladders (P7719/P7717), so it does *not* belong in
+    `core/ladder.py`'s `KNOWN_LADDERS` and hasn't been added there. Recording
+    the full band list here for whenever the activity/titer workflow is
+    actually built:
+    ```
+    10.0 kb / 40 ng    2.0 kb / 40 ng     0.9 kb / 34 ng    0.4 kb / 49 ng
+    8.0 kb / 40 ng     1.5 kb / 57 ng     0.8 kb / 31 ng    0.3 kb / 37 ng
+    6.0 kb / 48 ng     1.2 kb / 45 ng     0.7 kb / 27 ng    0.2 kb / 32 ng
+    5.0 kb / 40 ng     1.0 kb / 122 ng*   0.6 kb / 23 ng    0.1 kb / 61 ng
+    4.0 kb / 32 ng
+    3.0 kb / 120 ng*                      0.5 kb / 124 ng*
+    ```
+    (`*` = mass-reference bands, per the labeled product image.)
   - Per-image `.inf` sidecar files (AlphaImager instrument-export XML:
     exposure, gain, binning, creation timestamp, etc.) — potentially useful
     for cross-image normalization, though the samples checked so far show
@@ -795,8 +850,9 @@ rather than guessing.
   above) — this batch adds volume/variety to that case but zero new examples
   of the embedded-purity-standard-ladder case. Two images
   (`260407_protein_purity.tif`, `4.16.26 Protein Purity.tif`) are notably
-  low-contrast/washed-out — flagged, not yet resolved whether that's typical
-  scan quality (see `QUESTIONS_FOR_USERS.md`). One
+  low-contrast/washed-out — **root cause confirmed 2026-07-14**: an old
+  Coomassie-type stain the user's team discontinued using ~2025-12; scans
+  from that point forward should look better, nothing to fix in the tool. One
   (`251017_..._FusionProtein.tif`) shows a doublet band with explicit
   dilution-fold labels burned in — a useful edge case for band-matching logic.
   **This is the dataset all real-image pipeline testing/tuning has actually
@@ -826,6 +882,17 @@ rather than guessing.
     - `6.12.26 PDEV1718 Protein Purity.tif`, `260612_ProteinPurity.tif`,
       `260407_protein_purity.tif`, `4.16.26 Protein Purity.tif` — **no
       legible protein label found at all**; identity unknown, not just MW.
+      **2 of the 4 resolved 2026-07-14:**
+      - `260612_ProteinPurity.tif` — CoZyCap Njord, **confirmed MW
+        202,491.88 Da**, ladder **confirmed P7717** (now seeded, see above).
+      - `6.12.26 PDEV1718 Protein Purity.tif` — KasI, **confirmed MW
+        32,314.44 Da**, ladder **inferred P7719** (11 bands visible, matching
+        P7719's band count, plus majority-usage in this batch) — the user's
+        reasoned judgment call, not independently verified against a labeled
+        product image the way P7719/P7717 themselves were. Worth re-checking
+        if this image's calibration behaves oddly later.
+      - `260407_protein_purity.tif`, `4.16.26 Protein Purity.tif` — still
+        **no legible label and no ladder identity**; remains open.
   - **Important scope note on `daria_data`'s 4 confirmed MWs** (HpyCH4IV
     29,267 Da; FCE-T7 RNAP fusion 200,717 Da; EcoRI-HF 31,027 Da; BtgZI
     94,198 Da, all from the email thread): only HpyCH4IV has a matching

@@ -1,6 +1,6 @@
 """Purity workflow: target-band identification and purity % computation."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +28,18 @@ from gel_extractor.core.lanes import Lane, detect_bottom_edge_artifact_start, de
 # dominant one. Still coarse; expect further tuning with more real images.
 DEFAULT_MW_TOLERANCE_PERCENT = 20.0
 
+# Placeholder -- see AGENTS.md Known Limitations ("dilution-detectability
+# limit," confirmed real by the user 2026-07-14): at high dilution, faint
+# contaminant bands drop below the detection floor before the target band
+# does, inflating apparent purity. Rather than silently reporting that
+# inflated number at face value, a lane whose total detected signal is under
+# this fraction of the most-concentrated lane in the same image is flagged
+# `low_signal` -- not a fix for the underlying limit-of-detection effect
+# (there isn't one), just an honest confidence signal so a low-signal lane's
+# purity % isn't read with the same weight as a well-loaded one. Not yet
+# empirically tuned against real dilution series.
+DEFAULT_LOW_SIGNAL_FRACTION = 0.2
+
 
 @dataclass(frozen=True)
 class LaneResult:
@@ -38,6 +50,13 @@ class LaneResult:
     confidence: str  # "mw-matched" | "heuristic" | "not-found"
     target_mw_expected: float
     matched_band_mw: float | None
+    # True when this lane's total detected signal is faint relative to the
+    # most-concentrated lane in the same image -- a likely high-dilution
+    # lane where the dilution-detectability limit above may be inflating
+    # purity_percent. Only ever set by analyze_image (a whole-image, cross-
+    # lane comparison); analyze_lane() alone has no other lane to compare
+    # against and always leaves this False.
+    low_signal: bool = False
 
 
 @dataclass(frozen=True)
@@ -140,6 +159,7 @@ def analyze_image(
         selected = list(enumerate(sample_lanes, start=1))
 
     results: list[LaneResult] = []
+    lane_total_areas: list[float] = []
     lane_debug_info: list[LaneDebugInfo] = []
     for idx, lane in selected:
         cropped, top_bound = _adaptive_crop(signal, lane, bottom_bound)
@@ -152,7 +172,7 @@ def analyze_image(
         # two crops differ (confirmed as a real bug on a real image, not
         # theoretical -- see AGENTS.md Implementation Status, 2026-07-14).
         position_offset = top_bound - ladder_top_bound
-        result, bands, target_bands = _analyze_lane_detailed(
+        result, bands, target_bands, total_area = _analyze_lane_detailed(
             cropped.sum(axis=1),
             lane_index=idx,
             target_mw=target_mw,
@@ -162,6 +182,7 @@ def analyze_image(
             position_offset=position_offset,
         )
         results.append(result)
+        lane_total_areas.append(total_area)
         lane_debug_info.append(
             LaneDebugInfo(
                 lane=idx,
@@ -196,6 +217,22 @@ def analyze_image(
         ladder_calibration=calibration,
     )
 
+    # Flag lanes whose total detected signal is faint relative to the most-
+    # concentrated lane in this image -- likely high-dilution lanes where the
+    # dilution-detectability limit (see DEFAULT_LOW_SIGNAL_FRACTION) may be
+    # inflating purity_percent. A single --lane run has nothing else in the
+    # series to compare against, so max_area is just that one lane's own
+    # area and nothing gets flagged -- this is a whole-series comparison by
+    # design, not a per-lane property.
+    max_area = max(lane_total_areas, default=0.0)
+    if max_area > 0:
+        results = [
+            replace(result, low_signal=True)
+            if result.purity_percent is not None and area < max_area * DEFAULT_LOW_SIGNAL_FRACTION
+            else result
+            for result, area in zip(results, lane_total_areas)
+        ]
+
     return results, ladder_idx, debug_info
 
 
@@ -219,7 +256,7 @@ def analyze_lane(
     -- see `analyze_image` for why that matters; 0.0 (the default) assumes
     both lanes share a frame, true whenever they were cropped identically.
     """
-    result, _bands, _target_bands = _analyze_lane_detailed(
+    result, _bands, _target_bands, _total_area = _analyze_lane_detailed(
         lane_profile,
         lane_index=lane_index,
         target_mw=target_mw,
@@ -239,11 +276,14 @@ def _analyze_lane_detailed(
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
     position_offset: float = 0.0,
-) -> tuple[LaneResult, list[Band], list[Band]]:
-    """Same as `analyze_lane`, but also returns the raw bands and the subset
-    counted as the target -- for `--debug` visualization (see `LaneDebugInfo`).
-    `analyze_lane` stays the stable public entry point returning just the
-    result; this is where the actual work happens.
+) -> tuple[LaneResult, list[Band], list[Band], float]:
+    """Same as `analyze_lane`, but also returns the raw bands, the subset
+    counted as the target, and this lane's total detected band area --
+    the raw bands/target subset are for `--debug` visualization (see
+    `LaneDebugInfo`), the total area is for analyze_image's cross-lane
+    `low_signal` comparison (see `LaneResult`). `analyze_lane` stays the
+    stable public entry point returning just the result; this is where the
+    actual work happens.
     """
     corrected = correct_baseline(lane_profile)
     bands = detect_bands(corrected)
@@ -266,6 +306,7 @@ def _analyze_lane_detailed(
             ),
             bands,
             [],
+            total_area,
         )
 
     if calibration is not None:
@@ -282,6 +323,7 @@ def _analyze_lane_detailed(
                 ),
                 bands,
                 matched_bands,
+                total_area,
             )
 
     if not allow_heuristic:
@@ -295,6 +337,7 @@ def _analyze_lane_detailed(
             ),
             bands,
             [],
+            total_area,
         )
 
     target_bands = _largest_band(bands)
@@ -309,6 +352,7 @@ def _analyze_lane_detailed(
         ),
         bands,
         target_bands,
+        total_area,
     )
 
 

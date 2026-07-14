@@ -6,7 +6,7 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (45 tests, all passing).
+**Purity workflow: implemented and tested** (47 tests, all passing).
 **Activity workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
@@ -21,16 +21,21 @@ uv run gelx purity analyze "data/decodeon_gel_images/Protein Purity/8.6.25 Prote
 uv run pytest
 ```
 
-`--ladder P7719` is now a real, verified option (see `AGENTS.md`). Ladder
-calibration is deliberately lenient — it works from however many bands are
-confidently detected, empirically picking whichever plausible size alignment
-fits best, rather than requiring every known band to resolve or assuming a
-fixed direction for missing ones. Real MW-matching now produces consistent
-results across most lanes of the one real gel tested end to end, but there's
-a confirmed, unmitigated limitation: at high dilution, faint contaminant
-bands become undetectable before the target band does, which inflates
-apparent purity — see AGENTS.md's Known Limitations. Treat results as
-directional for now, not exact.
+`--ladder P7719` and `--ladder P7717` are now real, verified options (see
+`AGENTS.md`) — ladder choice genuinely varies by team/scientist, so there's
+no single default. Ladder calibration is deliberately lenient — it works
+from however many bands are confidently detected, empirically picking
+whichever plausible size alignment fits best, rather than requiring every
+known band to resolve or assuming a fixed direction for missing ones. Real
+MW-matching now produces consistent results across most lanes of the one
+real gel tested end to end, but there's a confirmed, structural limitation:
+at high dilution, faint contaminant bands become undetectable before the
+target band does, which inflates apparent purity. This can't be fixed
+outright (the information isn't in the image below some dilution level),
+but affected lanes are flagged `low_signal` in the output (a "Flag" column,
+or a `low_signal` field in `--csv`/`--json`) rather than reported at face
+value — see AGENTS.md's Known Limitations. Treat results as directional for
+now, not exact.
 
 ## What this project does (planned)
 
@@ -89,7 +94,7 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 45 tests, all passing.
+  currently has 47 tests, all passing.
 - **Reporting precision:** `purity_percent` rounds to the nearest whole
   percent (not 1 decimal) — deliberately, given the pipeline's known
   real-world imprecision.
