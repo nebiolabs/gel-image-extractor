@@ -163,6 +163,26 @@ lane's own strip-to-strip movement. Not rigorously tuned (one image, one
 value tried in the time available); see
 `scripts/curve_trace_anchor_compare.py` (gitignored, left on disk in this
 worktree) for the real-image comparison run.
+
+### Stretch goal: does the curved boundary change the purity number?
+
+Also compared (`scripts/curve_trace_purity_compare.py`, gitignored):
+per-lane purity % using the anchored curved trace as the lane boundary,
+against the existing straight-rectangle `purity.analysis.analyze_image`
+result, on the same real images -- reusing `analyze_image`/`analyze_lane`
+unchanged, swapping only the sample lane's intensity profile
+(`extract_curved_profile` instead of a fixed column-range sum). Honest
+result: on both `R-236_PDEV1452...png` and `8.6.25 Protein Purity.tif`,
+curved-trace purity % matched straight-rectangle purity % almost exactly
+(identical on most lanes, off by 1 percentage point on a few) -- the
+anchored window is narrow enough, and MW calibration/matching happens far
+enough down the lane (below the top-of-gel curvature this redesign
+actually captures), that the boundary shape barely moves the final number
+on these two images. In particular this does **not** touch R-236's
+separately-documented, unresolved MW-migration discrepancy (see AGENTS.md
+Known Limitations) -- that gap between measured and the 91% confirmed
+ground truth is a calibration issue, not a lane-shape issue, and this
+redesign was never expected to fix it.
 """
 
 from dataclasses import dataclass, field
