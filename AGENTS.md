@@ -288,7 +288,9 @@ without cause:
 ## Implementation Status
 
 **Current state (2026-07-14): purity workflow implemented and tested, 51
-tests passing.** Package layout: `src/gel_extractor/{core,purity}/`
+tests passing on `main` (this branch, `curve-tracing-lane-detection`, has
+59 -- 8 more for `core/curve_lanes.py`, see below).** Package layout:
+`src/gel_extractor/{core,purity}/`
 (src-layout), entry point `gelx` (`gelx purity analyze <image> --target-mw
 KDA [...]`). Run via `uv run gelx ...`; tests via `uv run pytest`. Test suite
 composition: unit tests per `core` module (synthetic, deterministic data),
@@ -430,29 +432,58 @@ kept here is every decision, root cause, and "don't retry X" warning.
     over fully closing this case, given the demonstrated over-merge risk.
     Gel smiling/curvature and bleed-over remain completely unaddressed.
   - **Curve-tracing prototype (2026-07-14) — explored as a potential
-    replacement architecture, real mixed results, not adopted.** The user
-    directly questioned whether the rectangle-lane assumption is fundamentally
-    the wrong model, given visible real curvature — a fair question, since
-    every over-segmentation bug above is arguably a symptom of collapsing a
-    curved 2D reality into straight 1D projections. ML was considered and
-    ruled out first (see Design Decisions) for lack of any pixel/lane-level
-    ground truth. A background agent then prototyped per-strip lane
-    detection + simple centroid tracking (deliberately skipping the harder
-    lane-split/merge problem) on branch `curve-tracing-lane-detection`
-    (`src/gel_extractor/core/curve_lanes.py`, not merged, not wired into the
-    real pipeline). **Result: real, visible improvement on a well-behaved
-    gel** (HpyCH4IV — curves follow the comb-tooth angle better than
-    rectangles) **but did not fix the motivating hard case**: on `PDEV1452`,
-    curve-tracing produced *more* fragments than the rectangle approach
-    (~27 vs. ~14 real lanes) — independent per-strip detection is noisier
-    than one whole-image column projection, and the no-merge tracker
-    amplified that noise rather than resolving it. Visual comparisons saved
-    to `data/curve_tracing_prototype_comparisons/` (gitignored, see Data
-    Inventory). **Recommended next step if resumed**: don't re-detect lane
-    candidates independently per strip — run `detect_lanes` once on the
-    whole image to fix lane count/identity first, then only trace each
-    already-identified lane's local curvature within a narrow window around
-    its known position.
+    replacement architecture; this branch (`curve-tracing-lane-detection`)
+    has since carried it further than a prototype (see below), still not
+    merged into `main`.** The user directly questioned whether the
+    rectangle-lane assumption is fundamentally the wrong model, given
+    visible real curvature — a fair question, since every over-segmentation
+    bug above is arguably a symptom of collapsing a curved 2D reality into
+    straight 1D projections. ML was considered and ruled out first (see
+    Design Decisions) for lack of any pixel/lane-level ground truth.
+    - **v1 (per-strip re-detection)**: a background agent prototyped
+      per-strip lane detection + simple centroid tracking (deliberately
+      skipping the harder lane-split/merge problem). Real, visible
+      improvement on a well-behaved gel (HpyCH4IV — curves follow the
+      comb-tooth angle better than rectangles) **but made the motivating
+      hard case worse**: on `PDEV1452`, curve-tracing produced *more*
+      fragments than the rectangle approach (~27 vs. ~14 real lanes) —
+      independent per-strip detection is noisier than one whole-image
+      column projection, and the no-merge tracker amplified that noise.
+    - **v2 (anchored redesign)**: don't re-detect lane candidates per strip
+      — run `detect_lanes` once to fix lane count/identity, then only trace
+      each already-identified lane's local curvature within a narrow window
+      around its known position (`trace_lane_from_anchor`/`trace_lanes_
+      from_detected` in `core/curve_lanes.py`). **Validated against all 17
+      real images: lane count matches `detect_lanes` exactly on every one**,
+      by construction — the fragment-count problem is gone (`PDEV1452`:
+      13/13). Genuinely good visible wins on `260612_ProteinPurity.tif` and
+      `4.16.26 Protein Purity.tif` — traced curves clearly bend to follow
+      real drift within heavily-loaded lanes.
+    - **v3 (wired into the real pipeline, this branch only, no flag — main
+      is a separate branch, fully unaffected)**: `purity.analysis.
+      analyze_image` now sums each lane's intensity along its traced curve
+      (`core.curve_lanes.extract_curved_profile`) instead of a straight
+      column range; `--debug` draws the curve (orange) directly. **Caught
+      and fixed a real bug in the process**: the anchor search window could
+      reach into a *neighboring* lane's own signal when lanes sit close
+      together, so a blank strip in one lane could pick up its neighbor's
+      signal as a false centroid instead of falling back correctly (a real
+      test failure — purity dropped from &gt;50% to 30%, a `not-found` lane
+      became a false `mw-matched` — not a theoretical concern). Fixed by
+      clamping each lane's search window to the midpoint to its nearest
+      neighbor. Re-validated after the fix: 59 tests pass, all 17 real
+      images still show an exact lane-count match, and real `gelx` purity
+      numbers land within 1-3 points of `main`'s straight-rectangle numbers
+      on both originally-tested images.
+    - Visual comparisons (all 17 real images, real `--debug` output as of
+      v3) saved to `data/curve_tracing_prototype_comparisons/` (gitignored,
+      see Data Inventory).
+    - **Not yet done**: `margin_fraction` (25%) tuned against only a couple
+      of images, not swept rigorously; bleed-over (merged wells) is
+      untouched by this entire line of work, a separate problem; band boxes
+      in `--debug` still use the straight lane's fixed width rather than
+      following the curve's per-row width (only the intensity summing and
+      the new curve line follow the curve, not yet the box rendering).
 
 - **Individual names removed from all docs, tests, and git history
   (2026-07-13).** Replaced accumulated submitter/reviewer names and email
@@ -713,11 +744,15 @@ rather than guessing.
   R-218 is the cleaved product of R-217, sharing the same confirmed MW — not
   a labeling error. See Implementation Status for the real end-to-end
   comparison run against this dataset.
-- `data/curve_tracing_prototype_comparisons/` — added 2026-07-14. 3 rendered
-  PNGs (+ a `README.md`) comparing the curve-tracing prototype's traced lane
-  boundaries against the existing straight-rectangle approach on real
-  images, generated from the `curve-tracing-lane-detection` branch. See
-  Implementation Status's curve-tracing entry for the verdict.
+- `data/curve_tracing_prototype_comparisons/` — added 2026-07-14, updated
+  same day as the work progressed (v1 → v2 → v3, see Implementation
+  Status's curve-tracing entry). Currently holds real `gelx purity analyze
+  --debug` output (`*_curved_debug.png`) for all 17 real example images,
+  generated from the `curve-tracing-lane-detection` branch once curved
+  tracing was wired into the actual pipeline -- earlier side-script
+  comparison renders (v1/v2) were superseded and removed once the real
+  `--debug` output could show the same thing directly. See the directory's
+  own `README.md` for the full v1→v2→v3 narrative.
 - `data/decodeon_gel_images/Titers/` — added 2026-07-13. 8 images that are a
   **structurally distinct third category**, not a clean fit for either
   existing workflow: inverted-contrast agarose gels showing a 2-fold enzyme

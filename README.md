@@ -6,7 +6,8 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (51 tests, all passing).
+**Purity workflow: implemented and tested** (59 tests on this branch,
+`curve-tracing-lane-detection` — see below; 51 on `main`).
 **Activity workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
@@ -118,7 +119,7 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 51 tests, all passing.
+  currently has 59 tests on this branch (51 on `main`), all passing.
 - **Reporting precision:** `purity_percent` rounds to the nearest whole
   percent (not 1 decimal) — deliberately, given the pipeline's known
   real-world imprecision.
@@ -128,11 +129,13 @@ See `AGENTS.md` for the full rationale.
   an end user see how a result was reached. **Always check this before
   trusting a number** — see the MVP scope note above.
 - **Lane vertical bounds (comb fringe, bottom cassette artifact) are
-  adaptive**; horizontal lane *fragmentation* has a validated partial fix.
-  Gel smiling/curvature and bleed-over between wide/diffuse bands remain
-  unaddressed — a curve-tracing prototype was explored on a separate branch
-  (`curve-tracing-lane-detection`) and showed real promise on clean gels but
-  didn't fix the worst real over-segmentation case; not merged. See
+  adaptive**; horizontal lane *fragmentation* has a validated partial fix on
+  `main`. Gel smiling/curvature is being explored on this branch
+  (`curve-tracing-lane-detection`, not merged into `main`) — curved lane
+  tracing is now wired into the real pipeline here (`--debug` draws the
+  traced curve directly), validated against all 17 real images with no
+  regressions and real purity numbers within 1-3 points of `main`'s. Bleed-
+  over between wide/diffuse bands remains untouched by this entirely. See
   `AGENTS.md`'s Implementation Status and Known Limitations for the full
   history, findings, and confirmed dead ends (don't re-attempt those
   without reading why they failed first).
