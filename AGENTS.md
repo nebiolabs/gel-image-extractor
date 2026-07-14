@@ -84,7 +84,8 @@ without cause:
   (image I/O, ladder detection/calibration, lane/grid segmentation, band/peak
   detection) and two thin, independent workflow modules on top — `purity` and
   `activity` — rather than two separate repos or one forced single pipeline.
-  Actual layout (as implemented):
+  Planned layout (`activity/` not yet created -- only `core/` and `purity/`
+  exist on disk today):
   ```
   src/gel_extractor/
     core/       # shared image-processing primitives
@@ -564,6 +565,12 @@ they're non-obvious and expensive to rediscover:
     (Attempt 1) — it's now a confirmed dead end for this specific problem,
     given real bands can be vertically localized while physical gel edges
     are not, which is the opposite of what that approach assumed.
+  - **Update 2026-07-14**: a *third*, narrower attempt (lane fragmentation
+    specifically, not the gel-edge/curvature problem this entry describes)
+    was implemented and validated -- see the dedicated "Lane fragmentation
+    fix" entry further down. Gel-edge-trimming (Attempt 2) itself is still
+    un-retried and its regression still un-root-caused; this update doesn't
+    change that.
 - **Individual names removed from all docs, tests, and git history
   (2026-07-13).** `AGENTS.md`, `QUESTIONS_FOR_USERS.md`, and
   `tests/test_purity_integration.py` had accumulated specific submitter/
@@ -729,6 +736,109 @@ they're non-obvious and expensive to rediscover:
   the image below some dilution -- it just stops an inflated reading from
   being presented with the same confidence as a well-loaded lane. 47 tests
   total, all passing.
+- **Real end-to-end comparison against 6 newly-confirmed-purity images
+  (2026-07-14) — the richest ground-truth we've had, and not a clean
+  validation win.** Ran `gelx purity analyze --ladder P7719 --allow-heuristic
+  --debug` against all 6 `data/pptx_tet3_gels/` images (see Data Inventory).
+  Two distinct, separable problems found, not one:
+  - **Lane detection is badly over/under-segmenting on all 6 images** --
+    every one detects 9-14 lanes against a visually obvious ~8-point
+    dilution series. Confirmed by direct visual inspection of `--debug`
+    output, not just the lane count: `R-236_PDEV1452...` shows a single,
+    visually continuous, unbroken band sliced into 7 separate fake "lanes"
+    with essentially random purity numbers (67%, 26%, 33%, 43%, 8%, 82%,
+    72%); other images show spurious thin slivers next to the ladder lane
+    and isolated corner-artifact boxes far from any real lane content. This
+    is the same still-open horizontal over-segmentation problem from
+    earlier (see Known Limitations) -- these 6 images are now by far its
+    best evidence, since we can check detected-lane purity against a real
+    confirmed number instead of just eyeballing plausibility.
+  - **A second, separate MW-migration discrepancy on the R-236 lots**
+    (`PDEV1452`, `PDEV1495`): the dominant, clearly-real protein band
+    consistently calibrates to ~95-100 kDa on the ladder -- nowhere near
+    the confirmed 53.5 kDa target, too large a gap to be noise. Not
+    root-caused -- candidate explanations (not distinguished between):
+    wrong ladder calibration window, this construct genuinely running
+    anomalously on SDS-PAGE relative to true MW, or the confirmed MW
+    referring to a cleaved form while the gel's dominant band is uncleaved.
+    Deliberately not chased further without more input -- tracked as a new
+    question in `QUESTIONS_FOR_USERS.md` rather than guessed at.
+  - **Not uniformly bad**: `R-236_PID1502_PDEV1580...`'s correctly-detected
+    real lanes (visually confirmed against the photo, not just trusted from
+    the table) landed 91-98% against a confirmed 98.5% -- reasonably close,
+    MW landing 61-64 kDa vs. 53.5 kDa confirmed (within the 20% tolerance
+    that let it match at all, but not tight).
+  - **Decision, discussed with the user**: resume the horizontal
+    over-segmentation fix next (see Known Limitations for prior attempts --
+    row-banding is a confirmed dead end, gel-edge-trimming was promising but
+    caused an unroot-caused regression on HpyCH4IV), validating against
+    HpyCH4IV *and* these 6 new images this time, since the earlier attempt
+    stalled specifically for lack of more than one real image to check
+    against. The MW-migration discrepancy is deliberately deferred, not
+    abandoned -- revisit once lane detection stops corrupting the ladder-lane
+    crop too, in case that's contributing.
+- **Lane fragmentation fix implemented and validated (2026-07-14) -- a real,
+  partial improvement, not a full solve of lane over-segmentation.**
+  Numerically diagnosed the pptx TET3 images (not just eyeballing `--debug`
+  output): a real dilution lane's column-sum gets close to
+  `threshold_fraction` of the image's peak as it fades, and ordinary
+  staining unevenness pushes it above/below that threshold repeatedly,
+  splitting one real lane into several small fragments -- confirmed by
+  measuring that fragment-to-fragment gaps (26-40px on `PDEV1452`) were
+  *smaller* than genuine inter-lane gaps elsewhere on the very same image
+  (65-183px), ruling out any single gap-size threshold.
+  - **First design (combined-span-only merge cap) caused a real regression,
+    caught by validating against every real image before committing to it
+    -- not just the image being fixed.** Merging whenever the *result* of
+    merging two runs stayed under a width cap derived from the image's own
+    run-width percentile worked on `PDEV1452`, but on `260612_ProteinPurity.tif`
+    it merged the ladder lane into the first sample lane, and merged two
+    distinct, clearly-separate real bands together on `R-218_PID1385_PDEV1411`
+    -- both confirmed by directly viewing the real gel photo, not just
+    trusting the lane count. Root cause: an unusually wide run elsewhere in
+    the same image (the ladder itself, or a separately-known bleed-over
+    lane) inflated the percentile-derived reference enough that the cap
+    became too permissive.
+  - **Fixed by gating merges on the *candidate run's own* width, not just the
+    combined result**: a run is only ever considered for merging if its own
+    width is under `DEFAULT_FRAGMENT_NARROW_FRACTION` (0.3) of the image's
+    reference width -- a normal-width real lane (the ladder, a distinct
+    sample lane) never qualifies no matter how close it sits to its
+    neighbor or how reasonable the combined span would look. The combined-
+    span cap (`DEFAULT_FRAGMENT_MERGE_FACTOR`, 1.5) is kept as a secondary
+    safety bound on top of that, not the primary gate.
+  - **User-raised design constraint, incorporated up front**: deliberately
+    does not use the physical comb or any assumed/expected lane pitch as a
+    reference -- the user pointed out the gel is a separate, flexible
+    medium no longer geometrically locked to the comb's original tooth
+    spacing once removed and run (this is exactly why gel smiling is a
+    separate issue). The fix only ever looks at *this image's own*
+    already-detected run widths at runtime, never at position/pitch.
+  - **Validated against all 17 real images** (11 `decodeon_gel_images` +
+    6 `pptx_tet3_gels`) comparing exact lane counts and boundaries before vs.
+    after, not just spot-checking: no image's lane count *increased*; most
+    decreased modestly or stayed the same. On HpyCH4IV (our one
+    ground-truth-validated image), the only change was merging two adjacent
+    fragments (widths 44 and 17, previously reporting 77%/82%) into one
+    lane reporting 73% -- a believable blend, not a wild jump, and every
+    other lane's result was untouched. On `PDEV1580` (previously our best
+    real-purity match), the already-good lanes (91%/98%/98% vs. confirmed
+    98.5%) were completely unchanged; a spurious 4% outlier fragment was
+    absorbed. On `260612_ProteinPurity.tif` and the R-218 case above, the
+    regression from the first design is gone.
+  - **Explicitly a partial fix, not a full solve**: `PDEV1452`'s 3-fragment
+    cluster only fully merges to 2 of 3 (13 lanes total, down from 14) --
+    the third fragment's width sits just outside the narrow-fraction cutoff.
+    Chose the safer, more conservative parameters deliberately rather than
+    tuning further to fully close this one case, given the demonstrated
+    risk of over-merging real distinct lanes elsewhere. Gel
+    smiling/curvature and bleed-over between wide/diffuse bands (see Known
+    Limitations) remain completely unaddressed -- this fix only targets
+    fragmentation of a single fading lane, not those two.
+  - Added `_merge_fragmented_runs` in `core/lanes.py`; 2 new unit tests in
+    `tests/test_core_lanes.py` (one confirming the merge, one a regression
+    guard replicating the exact over-merge failure mode found above). 49
+    tests total, all passing.
 
 ## Planned Features — Not Yet Built
 
@@ -746,23 +856,24 @@ yet. Don't silently fix or dismiss these without discussing first — they're
 recorded here specifically so they aren't lost or re-litigated from scratch.
 
 - **Lane capture has no horizontal smiling/curvature or bleed-over
-  handling — actively being investigated, not yet fixed.** (The vertical
-  top/bottom bound problem — comb/well fringe and the bottom cassette/tape
-  edge — is now resolved; see Implementation Status's adaptive-crop entry,
-  2026-07-14.) `detect_lanes` still collapses the whole image height into
-  one column-sum profile before any lane boundary exists, with no row-by-row
+  handling — partially addressed 2026-07-14 (lane fragmentation), gel
+  smiling/curvature and bleed-over still open.** (The vertical top/bottom
+  bound problem — comb/well fringe and the bottom cassette/tape edge — was
+  resolved earlier the same day; see Implementation Status's adaptive-crop
+  entry.) `detect_lanes` still collapses the whole image height into one
+  column-sum profile before any lane boundary exists, with no row-by-row
   awareness horizontally. This doesn't account for "gel smiling" (edge lanes
   migrating faster/slower than center lanes, curving bands across the gel —
   confirmed present, at least as a curved/slanted *physical gel edge*, on a
   real image), and doesn't guard against bleed-over from a neighboring lane
   when bands are wide/diffuse (real merged-blob band widths over 100px
-  observed). **Two fix attempts tried and reverted 2026-07-13 — full detail,
-  including a regression found on our one ground-truth-validated image
-  (HpyCH4IV), in Implementation Status's "Lane over-segmentation
-  investigation" entry.** Read that before re-attempting a fix — it records
-  which approach is a confirmed dead end (row-banding/majority-vote) and
-  which is promising but has an unresolved regression to root-cause first
-  (explicit gel-edge trimming).
+  observed) -- these two remain unfixed. **Two earlier fix attempts (2026-07-13)
+  were tried and reverted — full detail, including a regression found on our
+  one ground-truth-validated image (HpyCH4IV) at the time, in the "Lane
+  over-segmentation investigation" entry below.** A *third*, narrower fix
+  (lane fragmentation specifically — see the dedicated entry below) was
+  implemented and validated 2026-07-14 -- read that entry, not just this one,
+  before touching lane detection again.
 - **Dilution-detectability threshold skews purity at high dilution —
   confirmed real, partially mitigated 2026-07-14, not fixable outright.** As
   dilution increases, faint contaminant bands drop below the detection floor
@@ -904,6 +1015,26 @@ rather than guessing.
     exactly one confirmed real test case (HpyCH4IV)** — every other
     successful calibration in this batch only confirms the calibration
     *machinery* works, not that the reported purity % is correct.
+- `data/pptx_tet3_gels/` — added 2026-07-14, extracted from a PowerPoint the
+  user provided (`~/Downloads/7.14.26 TET3 Protein Gels & LabChip Purity.pptx`,
+  not itself committed anywhere). 6 real gel images, each with a **confirmed
+  ground-truth purity % AND confirmed MW written directly on the slide** —
+  the first time this project has had more than one confirmed-purity real
+  test case (previously just HpyCH4IV). Ladder confirmed by the user as
+  **P7719** for all 6 (not guessed). Per-file ground truth:
+  ```
+  R-217_PDEV1405_80pct_58.21874kDa.png       -- R-217 TET3, 80% pure, 58,218.74 Da
+  R-218_PID1385_PDEV1411_69pct_58.21874kDa.png -- R-218, cleaved TET3, 69% pure, 58,218.74 Da
+  R-236_PDEV1452_91pct_53.53519kDa.png       -- R-236, 91% pure, 53,535.19 Da
+  R-236_PDEV1495_91.6pct_53.53519kDa.png     -- R-236 TET3, 91.6% pure, 53,535.19 Da
+  R-244_PDEV1526_87.3pct_57.48889kDa.png     -- R-244 TET3, 87.3% pure, 57,488.89 Da
+  R-236_PID1502_PDEV1580_98.5pct_53.53519kDa.png -- R-236 TET3, 98.5% pure, 53,535.19 Da
+  ```
+  **R-217 and R-218 confirmed by the user (2026-07-14) to be the same
+  construct family**: R-218 is the cleaved product of R-217, and the two
+  share the same confirmed MW (58,218.74 Da) — not a labeling error, no
+  further question needed. See Implementation Status for the real
+  end-to-end comparison run against this dataset and what it found.
 - `data/decodeon_gel_images/Titers/` — added 2026-07-13. 8 images that are a
   **structurally distinct third category**, not a clean fit for either
   existing workflow: inverted-contrast agarose gels showing a 2-fold enzyme

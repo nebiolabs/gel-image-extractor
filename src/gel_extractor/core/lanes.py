@@ -22,6 +22,56 @@ DEFAULT_BASELINE_WINDOW = 51
 DEFAULT_MIN_LANE_WIDTH = 10
 DEFAULT_MIN_GAP_WIDTH = 4
 
+# Lane fragmentation fix (2026-07-14) -- see AGENTS.md Known Limitations /
+# Implementation Status. A real dilution series fades toward background
+# left to right; once a lane's column-sum gets close to `threshold_fraction`
+# of the image's single darkest peak, ordinary staining unevenness/noise
+# pushes it above and below that threshold repeatedly, splitting one real
+# (faint) lane into several small detected fragments with gaps in between --
+# confirmed on real images where fragment-to-fragment gaps (26-40px) were
+# *smaller* than genuine inter-lane gaps elsewhere on the very same image
+# (65-183px), so a single fixed or gap-size-only threshold can't tell them
+# apart (`DEFAULT_MIN_GAP_WIDTH` above only bridges trivial few-px noise
+# dips within an already-continuous blob; it isn't meant to solve this).
+#
+# Deliberately NOT based on the physical comb or any assumed/expected lane
+# pitch -- the gel is a separate, flexible medium that only briefly touched
+# the comb during casting, and nothing keeps it geometrically locked to the
+# comb's original tooth spacing once it's out of the rig and running (this
+# is exactly why "gel smiling" is a separate known issue). Instead, this
+# looks only at *this image's own* already-detected run widths: real,
+# well-resolved lanes on a given gel tend toward a broadly similar width
+# (set by well/loading geometry, not by across-gel position), while a
+# fragmented lane's individual pieces are each much narrower than that.
+#
+# First design tried (combined-span-only: merge whenever the *result* of
+# merging stays under a width cap, regardless of the individual runs' own
+# widths) caused a real regression, caught by validating against every real
+# image, not just the one being fixed: on one image, the ladder lane sat
+# close enough to the first sample lane, and another image's widest run
+# (itself a separate, already-known bleed-over/over-loading issue) inflated
+# the "typical width" reference enough that the cap became too permissive --
+# merging the ladder into a sample lane, and merging two distinct,
+# clearly-separate real bands together. Both are worse than leaving a real
+# lane fragmented.
+#
+# Fixed by requiring the *candidate run being added* to already look like a
+# plausible fragment on its own (width below `DEFAULT_FRAGMENT_NARROW_FRACTION`
+# of the image's own reference width) before it's considered for merging at
+# all -- not just "would the combined result be reasonable." A normal-width
+# real lane (the ladder, a distinct sample lane) never qualifies as a merge
+# candidate no matter how close it sits to its neighbor; only genuinely
+# narrow slivers do. The combined-span cap (`DEFAULT_FRAGMENT_MERGE_FACTOR`)
+# is kept as a secondary safety bound on top of that, not the primary gate.
+#
+# Empirically-derived placeholder values, tuned against HpyCH4IV plus 6
+# newly-confirmed real images (2026-07-14) specifically to avoid the
+# regression above -- expected to need further tuning as more real images
+# are checked, same as every other tunable constant in this project.
+DEFAULT_FRAGMENT_WIDTH_PERCENTILE = 75.0
+DEFAULT_FRAGMENT_NARROW_FRACTION = 0.3
+DEFAULT_FRAGMENT_MERGE_FACTOR = 1.5
+
 # Adaptive vertical-bound detection (2026-07-14) -- see AGENTS.md
 # Implementation Status. Two distinct real artifacts, confirmed on multiple
 # real images, that a fixed top-margin-only crop doesn't handle:
@@ -87,8 +137,11 @@ def detect_lanes(
     baseline_window: int = DEFAULT_BASELINE_WINDOW,
     min_lane_width: int = DEFAULT_MIN_LANE_WIDTH,
     min_gap_width: int = DEFAULT_MIN_GAP_WIDTH,
+    fragment_width_percentile: float = DEFAULT_FRAGMENT_WIDTH_PERCENTILE,
+    fragment_narrow_fraction: float = DEFAULT_FRAGMENT_NARROW_FRACTION,
+    fragment_merge_factor: float = DEFAULT_FRAGMENT_MERGE_FACTOR,
 ) -> list[Lane]:
-    """Detect vertical lanes in a gel's signal array via column-sum projection.
+    """Detect vertical lanes in a gel's signal array via column-intensity projection.
 
     Sums signal down each column, smooths the resulting profile, and
     baseline-corrects it (the same rolling-minimum approach used for band
@@ -98,8 +151,11 @@ def detect_lanes(
     slowly-varying baseline rather than near zero. Contiguous runs above
     `threshold_fraction` of the corrected profile's peak are treated as
     lanes; runs separated by a gap narrower than `min_gap_width` are merged
-    (a real lane can have a faint dip mid-lane without reaching background
-    level); runs narrower than `min_lane_width` are discarded as noise.
+    first (a real lane can have a trivial few-px noise dip without reaching
+    background level); `_merge_fragmented_runs` then merges runs that look
+    like pieces of one faded lane rather than genuinely separate lanes (see
+    its docstring and the module-level comment on `DEFAULT_FRAGMENT_*`);
+    runs narrower than `min_lane_width` are discarded as noise.
     """
     column_profile = signal.sum(axis=0)
     smoothed = gaussian_filter1d(column_profile, sigma=smoothing_sigma)
@@ -110,6 +166,7 @@ def detect_lanes(
 
     runs = _contiguous_runs(above)
     runs = _merge_close_runs(runs, min_gap_width)
+    runs = _merge_fragmented_runs(runs, fragment_width_percentile, fragment_narrow_fraction, fragment_merge_factor)
     runs = [r for r in runs if (r[1] - r[0]) >= min_lane_width]
 
     return [Lane(index=i, x_start=start, x_end=end) for i, (start, end) in enumerate(runs)]
@@ -225,6 +282,45 @@ def _merge_close_runs(runs: list[tuple[int, int]], min_gap_width: int) -> list[t
     for start, end in runs[1:]:
         prev_start, prev_end = merged[-1]
         if start - prev_end < min_gap_width:
+            merged[-1] = (prev_start, end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _merge_fragmented_runs(
+    runs: list[tuple[int, int]],
+    width_percentile: float = DEFAULT_FRAGMENT_WIDTH_PERCENTILE,
+    narrow_fraction: float = DEFAULT_FRAGMENT_NARROW_FRACTION,
+    merge_factor: float = DEFAULT_FRAGMENT_MERGE_FACTOR,
+) -> list[tuple[int, int]]:
+    """Merge adjacent runs that look like fragments of one faded lane.
+
+    See the module-level comment on `DEFAULT_FRAGMENT_*` for the full
+    rationale, including the regression this design specifically avoids.
+    Takes `width_percentile` of this image's own already-detected run widths
+    as a "typical single lane" reference, then walks left to right: a run is
+    only ever a *candidate* to merge into the current group if its own width
+    is under `narrow_fraction` of that reference (i.e. it already looks like
+    a plausible fragment on its own -- a normal-width real lane never
+    qualifies, no matter how close it sits to its neighbor or how reasonable
+    the combined result would look). `merge_factor` is a secondary cap on
+    the combined span, kept as a safety bound on top of the narrowness
+    check, not the primary gate.
+    """
+    if len(runs) < 2:
+        return runs
+    widths = [end - start for start, end in runs]
+    reference_width = np.percentile(widths, width_percentile)
+    narrow_threshold = reference_width * narrow_fraction
+    max_merged_width = reference_width * merge_factor
+
+    merged = [runs[0]]
+    for start, end in runs[1:]:
+        prev_start, prev_end = merged[-1]
+        is_narrow_candidate = (end - start) < narrow_threshold
+        fits_combined_cap = (end - prev_start) <= max_merged_width
+        if is_narrow_candidate and fits_combined_cap:
             merged[-1] = (prev_start, end)
         else:
             merged.append((start, end))

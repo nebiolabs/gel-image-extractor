@@ -132,6 +132,22 @@ outside domain knowledge or a business/scope call.
 
   `260407_protein_purity.tif` and `4.16.26 Protein Purity.tif` still have
   **no legible label and no ladder identity** — remains open.
+- [ ] **Why does the R-236 lots' dominant gel band calibrate ~40-50 kDa
+  higher than their confirmed MW?** Raised 2026-07-14, from running
+  `data/pptx_tet3_gels/` against the tool (see `AGENTS.md` Implementation
+  Status): on `PDEV1452` and `PDEV1495`, the clearly-real, visually dominant
+  protein band consistently lands at ~95-100 kDa against the ladder, but the
+  confirmed MW for both is 53,535.19 Da — too large a gap to be measurement
+  noise. Possible explanations, not distinguished between: (a) our ladder
+  calibration is picking a wrong fit window on these specific images, (b)
+  this construct genuinely runs anomalously on SDS-PAGE relative to its true
+  MW (not unusual for some fusion proteins), or (c) the confirmed MW refers
+  to a cleaved form while the dominant gel band is uncleaved (by analogy to
+  the confirmed R-217/R-218 cleaved-product relationship above — is
+  something similar happening here?). Deliberately not guessed at further;
+  deferred until after the lane over-segmentation fix in case that's a
+  contributing factor, but flagging now in case a domain expert already
+  knows the answer.
 
 ## Activity workflow
 
@@ -158,6 +174,7 @@ outside domain knowledge or a business/scope call.
 *Last updated: 2026-07-14 (ladder-standardization, low-contrast-scan-cause,
 embedded-standards, and dilution-detectability-handling questions all
 answered/decided; P7717 and N0550 ladder band lists obtained; 2 of the 4
-unlabeled images identified. See `AGENTS.md` "Known Limitations" for open
-engineering items that don't need end-user input). See `AGENTS.md` for full
-design context behind these questions.*
+unlabeled images identified; R-217/R-218 relationship confirmed; new
+question added on the R-236 lots' MW-migration discrepancy. See `AGENTS.md`
+"Known Limitations" for open engineering items that don't need end-user
+input). See `AGENTS.md` for full design context behind these questions.*
