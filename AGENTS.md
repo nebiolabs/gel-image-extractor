@@ -602,6 +602,89 @@ they're non-obvious and expensive to rediscover:
     likely needs to be root-caused *before* (or alongside) the HpyCH4IV
     lane-trimming regression -- both are part of "why doesn't this image
     produce a sane result," but they may be two separate bugs, not one.
+- **Adaptive top/bottom vertical crop bounds implemented (2026-07-14) --
+  root-caused and fixed the ladder-miscalibration finding above.** Using
+  `--debug`, the user spotted a second real artifact: the "comb" (the
+  plastic insert that forms loading wells) leaves a scalloped top edge with
+  real staining smear at the tooth boundaries, and the fixed 5% top-margin
+  crop wasn't nearly deep enough -- measured on real images, the fringe
+  extends 10.9%-21.9% of image height on HpyCH4IV (worse than the
+  fusion-protein image's 10-16%), confirmed by directly viewing `--debug`
+  output showing red band boxes drawn right around the comb's "V" shapes.
+  Separately, dumping the ladder lane's raw detected bands for the
+  fusion-protein image found the actual root cause of the earlier
+  miscalibration finding: a **dark horizontal line/edge near the very
+  bottom of the image (~88-90% down), appearing at nearly the same row in
+  *every* lane of *every* image checked (ladder included) -- confirmed via a
+  cross-lane row-position check, not just one lane's data. Its area (~2129
+  in one ladder lane) dwarfed every real band (next-largest ~243), so it
+  always won a slot in the "keep the k most prominent bands" step,
+  displacing genuine fainter rungs and corrupting the whole position-to-MW
+  mapping** -- not just the bottom of it. This is present in HpyCH4IV too
+  (our validated baseline), not just the stuck image; it just didn't happen
+  to break that image's results as visibly.
+  - **Fix**: `core.lanes.detect_comb_fringe_end` (per-lane, since fringe
+    depth varies lane to lane) uses each row's standard deviation across
+    that lane's own narrow width -- a comb tooth's converging diagonal
+    edges create real side-to-side contrast within one lane's column range,
+    while a real resolved band is close to uniform across that same width.
+    `core.lanes.detect_bottom_edge_artifact_start` (once per image, using
+    every detected lane's columns combined, since this artifact is
+    consistent across the whole gel width and averaging makes it stand out
+    far more clearly than any single lane's own noisier profile) uses an
+    IQR-style spread-based threshold (10th/90th percentile spread), not a
+    ratio to the median -- a plain ratio breaks down whenever a lane is
+    mostly blank (median near zero, so *any* signal looks "elevated"),
+    caught via a synthetic test with a near-blank lane. Both restrict their
+    search to a bounded window near their respective edge
+    (`DEFAULT_EDGE_SEARCH_FRACTION`, 30%): without this, a real target band
+    shared across every lane of a dilution series (same protein, same
+    migration distance) can look exactly like the "consistent across all
+    lanes" bottom artifact to that detector, so real mid-gel content needs
+    to be kept out of consideration entirely rather than trying to
+    distinguish it by shape. `Lane.crop` (the old fixed-fraction method) and
+    its test were removed -- fully superseded, no longer called anywhere.
+  - **A second, independent bug was found and fixed while validating this:
+    each lane now gets its own adaptive top crop, but `calibrate_ladder` fits
+    log(MW) vs. position *within the ladder lane's own cropped profile*.**
+    Sample-lane band positions are relative to *that lane's own* crop, which
+    can differ from the ladder's by 100+ px (comb depth varies lane to
+    lane) -- so "position X" no longer means the same physical row in both,
+    and `calibration.mw_at(band.center)` was silently computing the wrong
+    MW for every sample lane. Caught by noticing purity dropped to
+    single-digit percentages across *every* image after the crop fix landed
+    (too uniform to be random noise) -- traced to a real dominant band
+    (area 1025) calibrating to 56.9 kDa instead of ~29, while a much smaller
+    band (area 124) coincidentally calibrated into tolerance and got matched
+    instead. **Fixed** by threading a `position_offset` (`this lane's
+    top_bound - the ladder's own top_bound`) through `analyze_lane`/
+    `_match_target_band`, re-expressing each sample band's position in the
+    ladder's frame before calibrating.
+  - **Net result after both fixes, re-validated across all 5 confirmed-MW
+    proteins plus HpyCH4IV:** matched MWs landed much closer to the true
+    targets almost everywhere (e.g. IdeS Protease hit an exact 36.8 vs.
+    36.826 confirmed; CL_ASR29 tightened to 39.0-46.5 vs. the old scattered
+    38.5-53.2; HpyCH4IV to 28.5-32.4 vs. the old 32.1-34.9), and purity
+    percentages returned to healthy, higher ranges consistent with a
+    purified prep (e.g. CL_ASR29 40-81%, HpyCH4IV up to 71-74% on its most
+    concentrated lanes) instead of the depressed single digits the
+    coordinate-frame bug had caused. The fusion-protein image improved from
+    0/12 lanes matched to 3/12 (still the hardest case -- likely still
+    affected by the untouched horizontal over-segmentation problem above).
+  - **One test regression surfaced, root-caused as a pre-existing separate
+    issue, not a new one**: `test_dilution_series_purity_is_self_consistent`
+    now fails (spread 82 vs. the 70-point bound) on HpyCH4IV in
+    `--allow-heuristic` mode (no ladder/calibration -- pure largest-band
+    selection). Traced to lane 10 reporting 0% -- excluding just that one
+    lane drops the spread to 33, comfortably within bound. Lane 10 was
+    already flagged as showing near-zero real band area (`area=2`/`area=4`)
+    earlier the same day -- consistent with it being a spurious/edge lane
+    from the *horizontal* over-segmentation problem above, not something
+    today's vertical-margin work broke. **Not yet resolved how to handle
+    this test** -- discuss with the user before changing its bound or
+    filtering logic.
+  - 44 tests total, 43 passing (the one failure above, left visible rather
+    than silently loosened).
 
 ## Planned Features — Not Yet Built
 
@@ -618,24 +701,24 @@ Real, open items surfaced during implementation that haven't been resolved
 yet. Don't silently fix or dismiss these without discussing first — they're
 recorded here specifically so they aren't lost or re-litigated from scratch.
 
-- **Lane capture is a fixed vertical rectangle, with no smiling/curvature or
-  bleed-over handling — actively being investigated, not yet fixed.**
-  `Lane.crop` uses one `(x_start, x_end)` column range applied uniformly
-  across the entire image height; `detect_lanes` similarly collapses the
-  whole height into one column-sum profile before any lane boundary exists.
-  This doesn't account for "gel smiling" (edge lanes migrating faster/slower
-  than center lanes, curving bands across the gel — confirmed present, at
-  least as a curved/slanted *physical gel edge*, on a real image), doesn't
-  guard against bleed-over from a neighboring lane when bands are wide/
-  diffuse (real merged-blob band widths over 100px observed), and doesn't
-  exclude loading-well/aggregate smear at the top of a lane (still just a
-  fixed 5% top-margin crop, never validated). **Two fix attempts tried and
-  reverted 2026-07-13 — full detail, including a regression found on our one
-  ground-truth-validated image (HpyCH4IV), in Implementation Status's "Lane
-  over-segmentation investigation" entry.** Read that before re-attempting a
-  fix — it records which approach is a confirmed dead end (row-banding/
-  majority-vote) and which is promising but has an unresolved regression to
-  root-cause first (explicit gel-edge trimming).
+- **Lane capture has no horizontal smiling/curvature or bleed-over
+  handling — actively being investigated, not yet fixed.** (The vertical
+  top/bottom bound problem — comb/well fringe and the bottom cassette/tape
+  edge — is now resolved; see Implementation Status's adaptive-crop entry,
+  2026-07-14.) `detect_lanes` still collapses the whole image height into
+  one column-sum profile before any lane boundary exists, with no row-by-row
+  awareness horizontally. This doesn't account for "gel smiling" (edge lanes
+  migrating faster/slower than center lanes, curving bands across the gel —
+  confirmed present, at least as a curved/slanted *physical gel edge*, on a
+  real image), and doesn't guard against bleed-over from a neighboring lane
+  when bands are wide/diffuse (real merged-blob band widths over 100px
+  observed). **Two fix attempts tried and reverted 2026-07-13 — full detail,
+  including a regression found on our one ground-truth-validated image
+  (HpyCH4IV), in Implementation Status's "Lane over-segmentation
+  investigation" entry.** Read that before re-attempting a fix — it records
+  which approach is a confirmed dead end (row-banding/majority-vote) and
+  which is promising but has an unresolved regression to root-cause first
+  (explicit gel-edge trimming).
 - **Dilution-detectability threshold skews purity at high dilution —
   confirmed real, not yet mitigated.** As dilution increases, faint
   contaminant bands drop below the detection floor before the target band

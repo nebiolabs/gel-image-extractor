@@ -15,7 +15,7 @@ from gel_extractor.core.ladder import (
     calibrate_ladder,
     get_ladder_bands,
 )
-from gel_extractor.core.lanes import detect_lanes
+from gel_extractor.core.lanes import Lane, detect_bottom_edge_artifact_start, detect_comb_fringe_end, detect_lanes
 
 # Placeholder -- see AGENTS.md Design Decisions ("±15-20% of expected MW,
 # deliberately approximate, to be tuned empirically"). Moved from the
@@ -53,6 +53,8 @@ class LaneDebugInfo:
     lane: int  # matches LaneResult.lane for sample lanes; 0 (unused) for the ladder
     x_start: int
     x_end: int
+    top_bound: int  # row where this lane's comb/well fringe ends (adaptive, per-lane)
+    bottom_bound: int  # row where the shared bottom edge artifact begins (same for every lane)
     is_ladder: bool
     bands: list[Band]
     target_bands: list[Band]  # subset of `bands` counted as the target/matched signal
@@ -101,8 +103,18 @@ def analyze_image(
 
     known_mws = _resolve_known_mws(ladder, ladder_bands)
 
+    # Adaptive vertical bounds (see core.lanes, 2026-07-14): the bottom
+    # cassette/tape-edge artifact is consistent across the whole gel width,
+    # so it's detected once using every lane combined; the comb/well fringe
+    # at the top varies lane to lane, so it's detected per lane below.
+    all_lanes_mask = np.zeros(signal.shape[1], dtype=bool)
+    for lane in lanes:
+        all_lanes_mask[lane.x_start : lane.x_end] = True
+    bottom_bound = detect_bottom_edge_artifact_start(signal[:, all_lanes_mask])
+
     ladder_lane = lanes[ladder_idx]
-    ladder_profile = ladder_lane.crop(signal).sum(axis=1)
+    ladder_cropped, ladder_top_bound = _adaptive_crop(signal, ladder_lane, bottom_bound)
+    ladder_profile = ladder_cropped.sum(axis=1)
 
     calibration: LadderCalibration | None = None
     if known_mws is not None:
@@ -130,13 +142,24 @@ def analyze_image(
     results: list[LaneResult] = []
     lane_debug_info: list[LaneDebugInfo] = []
     for idx, lane in selected:
+        cropped, top_bound = _adaptive_crop(signal, lane, bottom_bound)
+        # Each lane's band positions are relative to *its own* adaptive
+        # top_bound, but `calibration` was fit against the ladder lane's own
+        # top_bound -- if the two differ (comb depth varies lane to lane,
+        # see core.lanes), "position 0" in each isn't the same physical row.
+        # Re-express this lane's positions in the ladder's frame before
+        # calibrating, or MW comes out silently wrong by however much the
+        # two crops differ (confirmed as a real bug on a real image, not
+        # theoretical -- see AGENTS.md Implementation Status, 2026-07-14).
+        position_offset = top_bound - ladder_top_bound
         result, bands, target_bands = _analyze_lane_detailed(
-            lane.crop(signal).sum(axis=1),
+            cropped.sum(axis=1),
             lane_index=idx,
             target_mw=target_mw,
             calibration=calibration,
             tolerance_percent=tolerance_percent,
             allow_heuristic=allow_heuristic,
+            position_offset=position_offset,
         )
         results.append(result)
         lane_debug_info.append(
@@ -144,6 +167,8 @@ def analyze_image(
                 lane=idx,
                 x_start=lane.x_start,
                 x_end=lane.x_end,
+                top_bound=top_bound,
+                bottom_bound=bottom_bound,
                 is_ladder=False,
                 bands=bands,
                 target_bands=target_bands,
@@ -160,6 +185,8 @@ def analyze_image(
                 lane=0,
                 x_start=ladder_lane.x_start,
                 x_end=ladder_lane.x_end,
+                top_bound=ladder_top_bound,
+                bottom_bound=bottom_bound,
                 is_ladder=True,
                 bands=ladder_bands_detected,
                 target_bands=[],
@@ -179,6 +206,7 @@ def analyze_lane(
     calibration: LadderCalibration | None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
+    position_offset: float = 0.0,
 ) -> LaneResult:
     """Compute a purity result for one sample lane's intensity profile.
 
@@ -186,7 +214,10 @@ def analyze_lane(
     If that fails to find a matching band -- or no calibration is available
     at all -- falls back to a largest-band heuristic only when
     `allow_heuristic` is set; otherwise reports "not-found" rather than
-    silently guessing.
+    silently guessing. `position_offset` re-expresses this lane's band
+    positions in the ladder lane's own coordinate frame before calibrating
+    -- see `analyze_image` for why that matters; 0.0 (the default) assumes
+    both lanes share a frame, true whenever they were cropped identically.
     """
     result, _bands, _target_bands = _analyze_lane_detailed(
         lane_profile,
@@ -195,6 +226,7 @@ def analyze_lane(
         calibration=calibration,
         tolerance_percent=tolerance_percent,
         allow_heuristic=allow_heuristic,
+        position_offset=position_offset,
     )
     return result
 
@@ -206,6 +238,7 @@ def _analyze_lane_detailed(
     calibration: LadderCalibration | None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
+    position_offset: float = 0.0,
 ) -> tuple[LaneResult, list[Band], list[Band]]:
     """Same as `analyze_lane`, but also returns the raw bands and the subset
     counted as the target -- for `--debug` visualization (see `LaneDebugInfo`).
@@ -217,7 +250,7 @@ def _analyze_lane_detailed(
     total_area = sum(b.area for b in bands)
 
     if calibration is not None:
-        matched_bands, matched_mw = _match_target_band(bands, calibration, target_mw, tolerance_percent)
+        matched_bands, matched_mw = _match_target_band(bands, calibration, target_mw, tolerance_percent, position_offset)
         if matched_bands:
             target_area = sum(b.area for b in matched_bands)
             return (
@@ -260,15 +293,36 @@ def _analyze_lane_detailed(
     )
 
 
+def _adaptive_crop(signal: np.ndarray, lane: Lane, bottom_bound: int) -> tuple[np.ndarray, int]:
+    """Crop one lane to its real resolving-gel content.
+
+    Excludes this lane's own comb/well fringe at the top (detected
+    per-lane, since fringe depth varies lane to lane -- see
+    `core.lanes.detect_comb_fringe_end`) and the shared bottom cassette/
+    tape-edge artifact (`bottom_bound`, detected once for the whole image
+    since it's consistent across every lane). Returns `(cropped, top_bound)`
+    -- callers building `LaneDebugInfo` need `top_bound` to correctly place
+    band boxes back onto the full image (see `purity.debug_viz`).
+    """
+    lane_columns = signal[:, lane.x_start : lane.x_end]
+    top_bound = detect_comb_fringe_end(lane_columns)
+    return lane_columns[top_bound:bottom_bound, :], top_bound
+
+
 def _match_target_band(
     bands: list[Band],
     calibration: LadderCalibration,
     target_mw: float,
     tolerance_percent: float,
+    position_offset: float = 0.0,
 ) -> tuple[list[Band], float | None]:
-    """Sum all bands within tolerance of target_mw (e.g. doublets), not just the nearest one."""
+    """Sum all bands within tolerance of target_mw (e.g. doublets), not just the nearest one.
+
+    `position_offset` re-expresses each band's position in the ladder
+    lane's own coordinate frame first -- see `analyze_image`.
+    """
     tolerance = target_mw * (tolerance_percent / 100.0)
-    matches = [(band, calibration.mw_at(band.center)) for band in bands]
+    matches = [(band, calibration.mw_at(band.center + position_offset)) for band in bands]
     matches = [(band, mw) for band, mw in matches if abs(mw - target_mw) <= tolerance]
     if not matches:
         return [], None

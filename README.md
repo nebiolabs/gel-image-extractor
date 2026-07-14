@@ -6,7 +6,8 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (41 tests passing). **Activity
+**Purity workflow: implemented and tested** (44 tests, 43 passing — 1 known
+failure tracked in AGENTS.md, not silently loosened). **Activity
 workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
@@ -89,7 +90,7 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 41 passing tests covering all of this.
+  currently has 44 tests, 43 passing (1 known failure — see AGENTS.md).
 - **Reporting precision:** `purity_percent` rounds to the nearest whole
   percent (not 1 decimal) — deliberately, given the pipeline's known
   real-world imprecision.
@@ -99,6 +100,12 @@ See `AGENTS.md` for the full rationale.
   debugging the pipeline and helping an end user see how a result was
   reached, not a separate internal-only tool. See `AGENTS.md`'s
   Implementation Status for a real example of what it surfaced.
+- **Lane vertical bounds are now adaptive, not a fixed top-margin crop** —
+  the loading-well "comb" fringe (which varies lane to lane) and a bottom
+  cassette/tape-edge artifact (consistent across every lane) are both
+  detected per-image rather than assumed. This also fixed a real
+  cross-lane coordinate-frame bug in MW calibration found while validating
+  it — see `AGENTS.md`'s Implementation Status for the full story.
 - Running this against real images surfaced some non-obvious findings (a
   data file that's actually a screenshot with UI chrome, real gel photos not
   being on a white background, a band-detection noise-robustness gap on

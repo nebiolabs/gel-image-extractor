@@ -52,7 +52,7 @@ def test_render_debug_image_draws_distinct_colors_for_target_and_contaminant(tmp
     target_band = sample_lane_debug.target_bands[0]
     other_band = next(b for b in sample_lane_debug.bands if b not in sample_lane_debug.target_bands)
 
-    top_offset = int(raw_image.shape[0] * 0.05)
+    top_offset = sample_lane_debug.top_bound
     mid_x = (sample_lane_debug.x_start + sample_lane_debug.x_end) // 2
 
     target_row_pixel = tuple(pixels[top_offset + target_band.start, mid_x])
