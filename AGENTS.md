@@ -538,7 +538,9 @@ they're non-obvious and expensive to rediscover:
     both attempts (`git checkout` on `core/lanes.py` and
     `purity/analysis.py`) rather than leave a regressed HpyCH4IV result in
     place — **repo is back to the last known-good state (36 tests passing,
-    commit `38327d7`)**.
+    commit `b0e42c8`)**. (Note: git history was rewritten 2026-07-13, after
+    this point, to remove individual names from commit contents — see
+    Working Agreements — so this hash reflects the rewritten history.)
   - **To resume:** the gel-edge-trimming *idea* (direction-agnostic
     nearest-centroid classification, verified conceptually sound against
     both contrast conventions) still looks like the right general direction
@@ -551,6 +553,24 @@ they're non-obvious and expensive to rediscover:
     (Attempt 1) — it's now a confirmed dead end for this specific problem,
     given real bands can be vertically localized while physical gel edges
     are not, which is the opposite of what that approach assumed.
+- **Individual names removed from all docs, tests, and git history
+  (2026-07-13).** `AGENTS.md`, `QUESTIONS_FOR_USERS.md`, and
+  `tests/test_purity_integration.py` had accumulated specific submitter/
+  reviewer names and email addresses (e.g. full name + `@neb.com` address
+  for each sub-project's submitter, a reviewer's name attached to the
+  NEBcutter suggestion). Replaced with role-based references (e.g. "the
+  purity project submitter," "a reviewer") in the current files, then
+  retroactively scrubbed the same strings from every prior commit's file
+  content via `git filter-branch --tree-filter` (safe: confirmed nothing had
+  been pushed to `origin` beyond the initial commit, which had no names in
+  it) — followed by removing the `refs/original/*` backup refs, expiring the
+  reflog, and `git gc --prune=now` so the old blobs are actually gone, not
+  just unreferenced. Commit hashes for every commit changed as a result
+  (content, authorship, dates, and messages were preserved) — see Working
+  Agreements for the standing rule going forward. One deliberate exception,
+  confirmed with the user: the pre-existing `data/daria_data/` directory
+  path (that folder is gitignored and never actually committed, only the
+  path string appears in doc prose) was left as-is rather than renamed.
 
 ## Known Limitations — Flagged for Later
 
@@ -717,6 +737,30 @@ Add to it as new questions surface; don't resolve them by guessing.
 - **No unilateral design assumptions.** This is a from-scratch project; decide
   architecture, libraries, algorithms, and scope iteratively and explicitly
   with the user rather than inferring intent. When in doubt, ask.
+- **No individual names in committed content, except Jacob's (2026-07-13).**
+  Refer to domain experts, submitters, and reviewers by role (e.g. "the
+  purity project submitter," "a reviewer") rather than by name or email
+  address, in every file that gets committed — docs, code comments, tests,
+  commit messages. Jacob Miller's own name is fine (he's already the git
+  commit author). This was retroactively applied to existing history via
+  `git filter-branch` on 2026-07-13 (safe since nothing had been pushed yet)
+  — see Implementation Status for the redaction details. Apply this rule
+  proactively going forward rather than writing a name and fixing it later.
+- **Never commit anything secret or proprietary (2026-07-13, scope resolved
+  2026-07-14).** This covers, at minimum: passwords, API keys/tokens,
+  credentials, connection strings, and any other secret in code, docs,
+  config, or test fixtures; login usernames/handles (distinct from the
+  personal-name rule above); and **sequence data, buffer composition, and
+  fermentation/formulation conditions for any protein or construct.**
+  A full-repo + full-history sweep on 2026-07-13 found no secrets/
+  credentials at all. It also found internal `PDEV####`/`PID####` lot codes
+  and construct names (e.g. `R-218`/TET3 fusion, `CL_ASR29`) already
+  committed across `AGENTS.md`/`QUESTIONS_FOR_USERS.md` — flagged to the
+  user for a decision, initially tabled, **resolved 2026-07-14: lot codes
+  and construct names do NOT need to be obfuscated and are fine to commit.**
+  The real, standing red line is sequences/buffer/fermentation/formulation
+  detail specifically — if any of that ever needs to be recorded, stop and
+  ask before committing it rather than assuming it's fine.
 - **Current phase: purity workflow implemented and tested; activity workflow
   not started.** See Implementation Status above. Don't start building the
   activity workflow until that's explicitly requested — finishing purity
