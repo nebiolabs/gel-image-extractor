@@ -1,6 +1,9 @@
 # Project data (gel images, QC reports, etc.) — not committed to the repo
 data/
 
+# Local dev/debug scripts — not committed to the repo
+scripts/
+
 # JetBrains IDE
 .idea/
 
