@@ -151,3 +151,9 @@ def test_get_ladder_bands_returns_p7719():
     bands = get_ladder_bands("P7719")
     assert bands == [250.0, 180.0, 130.0, 95.0, 72.0, 55.0, 43.0, 34.0, 26.0, 17.0, 10.0]
     assert bands == sorted(bands, reverse=True)
+
+
+def test_get_ladder_bands_returns_p7717():
+    bands = get_ladder_bands("P7717")
+    assert bands == [200.0, 150.0, 100.0, 85.0, 70.0, 60.0, 50.0, 40.0, 30.0, 25.0, 20.0, 15.0, 10.0]
+    assert bands == sorted(bands, reverse=True)

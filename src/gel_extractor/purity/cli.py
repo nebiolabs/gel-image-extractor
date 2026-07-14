@@ -39,7 +39,7 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
         metavar="NAME",
         help=(
             "Name of a known ladder to calibrate against (currently: "
-            "P7719). Use --ladder-bands instead for any other ladder. "
+            "P7719, P7717). Use --ladder-bands instead for any other ladder. "
             "Mutually exclusive with --ladder-bands."
         ),
     )

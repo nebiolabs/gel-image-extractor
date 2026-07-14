@@ -13,8 +13,12 @@ from gel_extractor.core.bands import correct_baseline, detect_bands
 # verified 2026-07-13 against NEB's own labeled product gel image (11 bands;
 # orange reference band at 72 kDa and green reference band at 26 kDa both
 # match, confirming the source) -- see QUESTIONS_FOR_USERS.md for provenance.
+#
+# P7717 verified 2026-07-14 against NEB's own labeled product gel image
+# (13 bands, 10-200 kDa) -- see QUESTIONS_FOR_USERS.md for provenance.
 KNOWN_LADDERS: dict[str, list[float]] = {
     "P7719": [250.0, 180.0, 130.0, 95.0, 72.0, 55.0, 43.0, 34.0, 26.0, 17.0, 10.0],
+    "P7717": [200.0, 150.0, 100.0, 85.0, 70.0, 60.0, 50.0, 40.0, 30.0, 25.0, 20.0, 15.0, 10.0],
 }
 
 
