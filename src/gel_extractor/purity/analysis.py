@@ -8,6 +8,7 @@ import numpy as np
 from gel_extractor.core.bands import Band, correct_baseline, detect_bands
 from gel_extractor.core.image_io import load_image, to_signal
 from gel_extractor.core.ladder import (
+    LADDER_MIN_SNR,
     LadderCalibration,
     LadderCalibrationError,
     UnknownLadderError,
@@ -39,6 +40,32 @@ class LaneResult:
     matched_band_mw: float | None
 
 
+@dataclass(frozen=True)
+class LaneDebugInfo:
+    """Raw per-lane detection detail, for the `--debug` visualization output.
+
+    Not part of `LaneResult` -- that stays a clean, stable result object for
+    table/CSV/JSON output (see AGENTS.md "modular, swappable architecture").
+    This carries the underlying `Band` objects a debug renderer needs but
+    that end-user output formats never should.
+    """
+
+    lane: int  # matches LaneResult.lane for sample lanes; 0 (unused) for the ladder
+    x_start: int
+    x_end: int
+    is_ladder: bool
+    bands: list[Band]
+    target_bands: list[Band]  # subset of `bands` counted as the target/matched signal
+
+
+@dataclass(frozen=True)
+class AnalysisDebugInfo:
+    """Full per-lane detection detail for one analyzed image, for `--debug`."""
+
+    lanes: list[LaneDebugInfo]
+    ladder_calibration: LadderCalibration | None
+
+
 class LadderNotCalibratedError(RuntimeError):
     """Raised when the ladder can't be calibrated and --allow-heuristic wasn't given."""
 
@@ -52,13 +79,15 @@ def analyze_image(
     lane_index: int | None = None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
-) -> tuple[list[LaneResult], int]:
+) -> tuple[list[LaneResult], int, AnalysisDebugInfo]:
     """Run the full purity pipeline on a gel image.
 
-    Returns `(results, ladder_lane_index)` -- the ladder lane is excluded
-    from `results`. `ladder_lane_index` and `lane_index` (if given) are
-    0-based and 1-based respectively, matching the CLI's `--ladder-lane` and
-    `--lane` flags.
+    Returns `(results, ladder_lane_index, debug_info)` -- the ladder lane is
+    excluded from `results`. `ladder_lane_index` and `lane_index` (if given)
+    are 0-based and 1-based respectively, matching the CLI's `--ladder-lane`
+    and `--lane` flags. `debug_info` carries the raw lane/band detections
+    behind the results, for the `--debug` visualization output -- see
+    `purity.debug_viz`.
     """
     image = load_image(path)
     signal = to_signal(image)
@@ -72,9 +101,11 @@ def analyze_image(
 
     known_mws = _resolve_known_mws(ladder, ladder_bands)
 
+    ladder_lane = lanes[ladder_idx]
+    ladder_profile = ladder_lane.crop(signal).sum(axis=1)
+
     calibration: LadderCalibration | None = None
     if known_mws is not None:
-        ladder_profile = lanes[ladder_idx].crop(signal).sum(axis=1)
         try:
             calibration = calibrate_ladder(ladder_profile, known_mws)
         except LadderCalibrationError:
@@ -96,8 +127,10 @@ def analyze_image(
     else:
         selected = list(enumerate(sample_lanes, start=1))
 
-    results = [
-        analyze_lane(
+    results: list[LaneResult] = []
+    lane_debug_info: list[LaneDebugInfo] = []
+    for idx, lane in selected:
+        result, bands, target_bands = _analyze_lane_detailed(
             lane.crop(signal).sum(axis=1),
             lane_index=idx,
             target_mw=target_mw,
@@ -105,9 +138,38 @@ def analyze_image(
             tolerance_percent=tolerance_percent,
             allow_heuristic=allow_heuristic,
         )
-        for idx, lane in selected
-    ]
-    return results, ladder_idx
+        results.append(result)
+        lane_debug_info.append(
+            LaneDebugInfo(
+                lane=idx,
+                x_start=lane.x_start,
+                x_end=lane.x_end,
+                is_ladder=False,
+                bands=bands,
+                target_bands=target_bands,
+            )
+        )
+
+    # Recomputed with the ladder-specific noise floor (see core.ladder) so the
+    # debug image shows exactly the bands calibration actually used, not a
+    # different set from the general-purpose default.
+    ladder_bands_detected = detect_bands(correct_baseline(ladder_profile), min_snr=LADDER_MIN_SNR)
+    debug_info = AnalysisDebugInfo(
+        lanes=[
+            LaneDebugInfo(
+                lane=0,
+                x_start=ladder_lane.x_start,
+                x_end=ladder_lane.x_end,
+                is_ladder=True,
+                bands=ladder_bands_detected,
+                target_bands=[],
+            ),
+            *lane_debug_info,
+        ],
+        ladder_calibration=calibration,
+    )
+
+    return results, ladder_idx, debug_info
 
 
 def analyze_lane(
@@ -126,6 +188,30 @@ def analyze_lane(
     `allow_heuristic` is set; otherwise reports "not-found" rather than
     silently guessing.
     """
+    result, _bands, _target_bands = _analyze_lane_detailed(
+        lane_profile,
+        lane_index=lane_index,
+        target_mw=target_mw,
+        calibration=calibration,
+        tolerance_percent=tolerance_percent,
+        allow_heuristic=allow_heuristic,
+    )
+    return result
+
+
+def _analyze_lane_detailed(
+    lane_profile: np.ndarray,
+    lane_index: int,
+    target_mw: float,
+    calibration: LadderCalibration | None,
+    tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
+    allow_heuristic: bool = False,
+) -> tuple[LaneResult, list[Band], list[Band]]:
+    """Same as `analyze_lane`, but also returns the raw bands and the subset
+    counted as the target -- for `--debug` visualization (see `LaneDebugInfo`).
+    `analyze_lane` stays the stable public entry point returning just the
+    result; this is where the actual work happens.
+    """
     corrected = correct_baseline(lane_profile)
     bands = detect_bands(corrected)
     total_area = sum(b.area for b in bands)
@@ -134,31 +220,43 @@ def analyze_lane(
         matched_bands, matched_mw = _match_target_band(bands, calibration, target_mw, tolerance_percent)
         if matched_bands:
             target_area = sum(b.area for b in matched_bands)
-            return LaneResult(
-                lane=lane_index,
-                purity_percent=_safe_percent(target_area, total_area),
-                confidence="mw-matched",
-                target_mw_expected=target_mw,
-                matched_band_mw=matched_mw,
+            return (
+                LaneResult(
+                    lane=lane_index,
+                    purity_percent=_safe_percent(target_area, total_area),
+                    confidence="mw-matched",
+                    target_mw_expected=target_mw,
+                    matched_band_mw=matched_mw,
+                ),
+                bands,
+                matched_bands,
             )
 
     if not allow_heuristic:
-        return LaneResult(
-            lane=lane_index,
-            purity_percent=None,
-            confidence="not-found",
-            target_mw_expected=target_mw,
-            matched_band_mw=None,
+        return (
+            LaneResult(
+                lane=lane_index,
+                purity_percent=None,
+                confidence="not-found",
+                target_mw_expected=target_mw,
+                matched_band_mw=None,
+            ),
+            bands,
+            [],
         )
 
     target_bands = _largest_band(bands)
     target_area = sum(b.area for b in target_bands)
-    return LaneResult(
-        lane=lane_index,
-        purity_percent=_safe_percent(target_area, total_area),
-        confidence="heuristic",
-        target_mw_expected=target_mw,
-        matched_band_mw=None,
+    return (
+        LaneResult(
+            lane=lane_index,
+            purity_percent=_safe_percent(target_area, total_area),
+            confidence="heuristic",
+            target_mw_expected=target_mw,
+            matched_band_mw=None,
+        ),
+        bands,
+        target_bands,
     )
 
 

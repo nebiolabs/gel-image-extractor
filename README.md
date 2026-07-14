@@ -6,7 +6,7 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (36 tests passing). **Activity
+**Purity workflow: implemented and tested** (41 tests passing). **Activity
 workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
@@ -89,10 +89,16 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 36 passing tests covering all of this.
+  currently has 41 passing tests covering all of this.
 - **Reporting precision:** `purity_percent` rounds to the nearest whole
   percent (not 1 decimal) — deliberately, given the pipeline's known
   real-world imprecision.
+- **`--debug [PATH]` writes an annotated debug image** showing detected lane
+  boxes (blue = ladder, amber = sample), band boxes (green = target/matched,
+  red = other/contaminant), and per-lane purity/MW labels — built for both
+  debugging the pipeline and helping an end user see how a result was
+  reached, not a separate internal-only tool. See `AGENTS.md`'s
+  Implementation Status for a real example of what it surfaced.
 - Running this against real images surfaced some non-obvious findings (a
   data file that's actually a screenshot with UI chrome, real gel photos not
   being on a white background, a band-detection noise-robustness gap on

@@ -111,7 +111,7 @@ def test_analyze_image_end_to_end_with_ladder_bands(tmp_path, synthetic_gel):
     path = tmp_path / "gel.png"
     imsave(str(path), (image * 255).astype("uint8"))
 
-    results, ladder_lane_index = analyze_image(
+    results, ladder_lane_index, debug_info = analyze_image(
         str(path),
         target_mw=target_mw,
         ladder_bands=known_mws,
@@ -125,3 +125,13 @@ def test_analyze_image_end_to_end_with_ladder_bands(tmp_path, synthetic_gel):
     assert result.purity_percent is not None
     # target band (0.6 darkness) should dominate over the fainter contaminant (0.3)
     assert result.purity_percent > 50
+
+    # debug_info should carry the raw detections behind the above result.
+    assert len(debug_info.lanes) == 2
+    ladder_debug, sample_debug = debug_info.lanes
+    assert ladder_debug.is_ladder is True
+    assert len(ladder_debug.bands) == len(known_mws)
+    assert debug_info.ladder_calibration is not None
+    assert sample_debug.is_ladder is False
+    assert len(sample_debug.bands) == 2  # target + contaminant
+    assert len(sample_debug.target_bands) == 1  # only the target band matched

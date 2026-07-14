@@ -82,6 +82,43 @@ def test_cli_analyze_csv_to_file(tmp_path, synthetic_gel, capsys):
     assert "mw-matched" in content
 
 
+def test_cli_analyze_debug_image_to_file(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+    debug_path = tmp_path / "out_debug.png"
+
+    exit_code = main(
+        [
+            "purity",
+            "analyze",
+            str(path),
+            "--target-mw",
+            "25",
+            "--ladder-bands",
+            ladder_bands_arg,
+            "--debug",
+            str(debug_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert debug_path.exists()
+    assert "Debug image written to" in captured.out
+
+
+def test_cli_analyze_debug_image_default_path(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+
+    exit_code = main(
+        ["purity", "analyze", str(path), "--target-mw", "25", "--ladder-bands", ladder_bands_arg, "--debug"]
+    )
+
+    assert exit_code == 0
+    assert (tmp_path / "gel_debug.png").exists()
+
+
 def test_cli_analyze_errors_without_ladder_info(tmp_path, synthetic_gel, capsys):
     path, _ = _write_synthetic_gel(tmp_path, synthetic_gel)
 

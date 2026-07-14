@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(
 def test_purity_runs_on_real_gel_image():
     # No verified ladder band sizes exist yet (see QUESTIONS_FOR_USERS.md),
     # so this uses --allow-heuristic rather than MW-matching.
-    results, ladder_lane_index = analyze_image(
+    results, ladder_lane_index, _debug_info = analyze_image(
         str(HPYCH4IV_IMAGE),
         target_mw=29.267,  # HpyCH4IV MW per the submitter's email: 29,267 Da
         allow_heuristic=True,
@@ -43,7 +43,7 @@ def test_dilution_series_purity_is_self_consistent():
     external ground truth -- see AGENTS.md Design Decisions and
     QUESTIONS_FOR_USERS.md.
     """
-    results, _ = analyze_image(str(HPYCH4IV_IMAGE), target_mw=29.267, allow_heuristic=True)
+    results, _, _debug_info = analyze_image(str(HPYCH4IV_IMAGE), target_mw=29.267, allow_heuristic=True)
     purities = [r.purity_percent for r in results if r.purity_percent is not None]
     assert len(purities) >= 3, f"expected several dilution lanes with results, got {purities}"
 

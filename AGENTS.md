@@ -571,6 +571,46 @@ they're non-obvious and expensive to rediscover:
   confirmed with the user: the pre-existing `data/daria_data/` directory
   path (that folder is gitignored and never actually committed, only the
   path string appears in doc prose) was left as-is rather than renamed.
+- **`--debug` visualization output implemented (2026-07-14).** `gelx purity
+  analyze ... --debug [PATH]` writes an annotated copy of the input image:
+  lane boxes (blue = ladder, amber = sample), band boxes (green = target/
+  matched, red = other/contaminant), a per-lane label with purity %/matched
+  MW (or "not-found"), and the ladder lane's calibrated MW at each fitted
+  band position. Built as one feature for both debugging and end-user use
+  (not a separate dev-only tool) per discussion with the user — see
+  [[debug_visualization_feature]] in memory for the full scope discussion.
+  `analyze_image()`'s return signature changed from `(results,
+  ladder_lane_index)` to `(results, ladder_lane_index, debug_info)` to carry
+  the raw per-lane `Band` detections a renderer needs (`LaneDebugInfo`/
+  `AnalysisDebugInfo` in `purity/analysis.py`) without polluting `LaneResult`
+  (kept clean for table/CSV/JSON output). Added `pillow` as an explicit
+  dependency (previously only a transitive one via scikit-image). 41 tests
+  passing (was 36).
+  - **Immediately paid for itself**: running `--debug` against
+    `251017_..._FusionProtein.tif` (the stuck lane-over-segmentation case,
+    see the entry above) visually confirmed the over-segmentation at a
+    glance (multiple thin lane boxes visibly slicing through what's clearly
+    one physical lane, plus the isolated far-right artifact box) --
+    **but also surfaced a bigger, previously-unclear problem: the ladder's
+    calibrated MW tick marks place the visibly dominant doublet band
+    between the 130 and 180 kDa ticks, nowhere near the 58.2 kDa target.**
+    That's a large miscalibration (likely the multi-window best-fit search
+    picking a materially wrong window/alignment for this image's ladder),
+    not just a lane-boundary problem -- previously this was only visible
+    indirectly (every lane reporting "not-found"), not as a clear "the
+    calibration itself put the ticks in the wrong place" signal. This
+    likely needs to be root-caused *before* (or alongside) the HpyCH4IV
+    lane-trimming regression -- both are part of "why doesn't this image
+    produce a sane result," but they may be two separate bugs, not one.
+
+## Planned Features — Not Yet Built
+
+Requested, agreed-on-in-principle, but not yet implemented — don't build
+without confirming scope first (see Working Agreements).
+
+- **Second (class/method call-flow) mermaid diagram** — see Architecture
+  Diagram section below; tracked in memory
+  ([[planned_call_flow_diagram]]), not yet built.
 
 ## Known Limitations — Flagged for Later
 

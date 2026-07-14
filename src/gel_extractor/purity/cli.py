@@ -2,8 +2,11 @@
 
 import argparse
 import sys
+from pathlib import Path
 
+from gel_extractor.core.image_io import load_image
 from gel_extractor.purity.analysis import DEFAULT_MW_TOLERANCE_PERCENT, LadderNotCalibratedError, analyze_image
+from gel_extractor.purity.debug_viz import save_debug_image
 from gel_extractor.purity.output import format_csv, format_json, format_table, write_output
 
 
@@ -107,6 +110,20 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
             "and still prints the table."
         ),
     )
+    analyze_parser.add_argument(
+        "--debug",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Also write an annotated debug image showing detected lane and "
+            "band boxes (blue = ladder lane, amber = sample lane, green = "
+            "band counted as the target/matched signal, red = other/"
+            "contaminant band). With no PATH, writes next to the input image "
+            "as '<input-stem>_debug.png'."
+        ),
+    )
     analyze_parser.set_defaults(func=_run_analyze)
 
 
@@ -118,7 +135,7 @@ def _run_analyze(args: argparse.Namespace) -> int:
     ladder_bands = [float(v) for v in args.ladder_bands.split(",")] if args.ladder_bands else None
 
     try:
-        results, ladder_lane_index = analyze_image(
+        results, ladder_lane_index, debug_info = analyze_image(
             args.image,
             target_mw=args.target_mw,
             ladder=args.ladder,
@@ -140,5 +157,11 @@ def _run_analyze(args: argparse.Namespace) -> int:
         write_output(format_csv(results), None if args.csv == "-" else args.csv)
     if args.json is not None:
         write_output(format_json(results, ladder_lane_index), None if args.json == "-" else args.json)
+
+    if args.debug is not None:
+        debug_path = args.debug or str(Path(args.image).with_name(Path(args.image).stem + "_debug.png"))
+        raw_image = load_image(args.image)
+        save_debug_image(raw_image, results, debug_info, debug_path)
+        print(f"Debug image written to {debug_path}")
 
     return 0
