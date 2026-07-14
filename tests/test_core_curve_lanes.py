@@ -2,9 +2,12 @@ import numpy as np
 
 from gel_extractor.core.curve_lanes import (
     extract_curved_profile,
-    track_lanes_across_strips,
+    trace_lane_from_anchor,
     trace_lanes,
+    trace_lanes_from_detected,
+    track_lanes_across_strips,
 )
+from gel_extractor.core.lanes import Lane, detect_lanes
 
 
 def _synthetic_smiling_gel(height=300, width=200, curvature=15.0):
@@ -97,6 +100,58 @@ def test_track_lanes_does_not_merge_two_close_candidates_into_one_track():
     assert len(tracks) == 2
     centroids_by_track = sorted(t.strips[-1].centroid for t in tracks)
     assert centroids_by_track == [16.0, 84.0]
+
+
+def test_trace_lanes_from_detected_preserves_detect_lanes_count():
+    # The whole point of the anchored redesign: lane count/identity comes
+    # from one whole-image detect_lanes call, so anchored tracing can never
+    # produce more or fewer tracks than that -- no split/merge ambiguity to
+    # spawn spurious extras (unlike the earlier per-strip-redetection
+    # prototype, see module docstring "Findings").
+    img = _synthetic_smiling_gel()
+
+    lanes = detect_lanes(img)
+    detected_lanes, tracks = trace_lanes_from_detected(img, num_strips=12)
+
+    assert len(tracks) == len(lanes) == len(detected_lanes) == 3
+
+
+def test_trace_lane_from_anchor_follows_curvature_more_than_center_lane():
+    # Same real property the earlier prototype's test checked (edge lanes
+    # drift more than the center lane) but now via the anchored entry point,
+    # confirming curvature tracking survived the redesign.
+    img = _synthetic_smiling_gel()
+    lanes = detect_lanes(img)
+    assert len(lanes) == 3
+
+    tracks = [trace_lane_from_anchor(img, lane, num_strips=12) for lane in lanes]
+    drifts = []
+    for track in tracks:
+        centroids = [s.centroid for s in track.strips]
+        drifts.append(max(centroids) - min(centroids))
+
+    edge_drifts = [drifts[0], drifts[2]]
+    center_drift = drifts[1]
+    assert all(d > center_drift * 2 for d in edge_drifts)
+
+
+def test_trace_lane_from_anchor_keeps_centroid_within_window_bounds():
+    # Two lanes are far apart, but one has a much brighter signal than the
+    # other. The anchor window must stop that brighter signal from pulling
+    # a different lane's traced centroid across -- containment is what
+    # eliminates the over-segmentation the earlier prototype introduced.
+    height, width = 100, 200
+    img = np.zeros((height, width))
+    lane = Lane(index=0, x_start=40, x_end=60)  # width 20
+    img[:, 40:60] = 1.0  # this lane's own (faint) signal
+    img[:, 90:110] = 100.0  # a much brighter, unrelated lane far outside the window
+
+    margin_fraction = 0.25
+    track = trace_lane_from_anchor(img, lane, num_strips=5, margin_fraction=margin_fraction)
+
+    margin = int(round((lane.x_end - lane.x_start) * margin_fraction))
+    for strip in track.strips:
+        assert lane.x_start - margin <= strip.centroid <= lane.x_end + margin
 
 
 def test_extract_curved_profile_matches_straight_sum_on_a_straight_lane():

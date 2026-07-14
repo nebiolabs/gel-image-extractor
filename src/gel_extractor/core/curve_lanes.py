@@ -117,13 +117,59 @@ per-strip search enough to avoid spawning spurious tracks from noise,
 while still capturing real curvature -- likely a better combination than
 either fully-independent per-strip detection (this prototype) or a single
 rigid rectangle (the current production approach).
+
+## Redesign: anchored tracing (2026-07-14, follow-up session)
+
+Implemented the "recommended next step" above as `trace_lane_from_anchor`
+(single lane) / `trace_lanes_from_detected` (whole image, the entry point
+meant for real use). This deliberately does **not** replace the
+per-strip-detect-then-track machinery above (`detect_lanes_per_strip`,
+`track_lanes_across_strips`, `trace_lanes`) -- that code and its tests are
+left as-is, documenting the rejected approach and why. The new functions
+are additive.
+
+The key structural change: lane *identity and count* now come from one call
+to `core.lanes.detect_lanes` on the whole image -- the same call
+`purity.analysis.analyze_image` already makes and already has its own
+validated lane-fragmentation fixes (comb-fringe/bottom-edge adaptive
+cropping, min-width/min-gap merging). Per strip, each already-identified
+lane's centroid is recomputed as a weighted center of mass *only within a
+narrow window* around that lane's whole-image `x_start`/`x_end` (`margin`
+below), not by re-running lane detection from scratch on the strip. Since
+no new lanes can appear and no lane can vanish (the window always exists,
+even if its content is faint), there is no split/merge ambiguity left to
+introduce -- only "where did this lane's center drift to."
+
+Validated 2026-07-14 against the same real images used above:
+
+- `R-236_PDEV1452_91pct_53.53519kDa.png` (the hard over-segmentation case):
+  `detect_lanes` finds 14 lanes; anchored tracing produces exactly 14
+  tracks (one per anchor, by construction) -- fixes the fragment-count
+  problem the per-strip-redetection prototype made worse (27 vs. ~14).
+  This is close to a tautology (the anchor step *is* `detect_lanes`), but
+  it's also exactly the point: count/identity ambiguity is eliminated by
+  design rather than resolved after the fact.
+- `8.6.25 Protein Purity.tif` (the well-behaved gel): the earlier real win
+  -- traced curves visibly converging into comb teeth -- is preserved,
+  since the windowed per-strip centroid still moves with real curvature;
+  it just can't drift far enough to jump to a neighboring lane's anchor
+  (bounded by `margin`).
+
+`margin` (the anchor window's one-sided padding beyond the lane's own
+detected width) defaults to 25% of the lane's width (`DEFAULT_ANCHOR_MARGIN_FRACTION`)
+-- narrow enough to reject a neighboring lane's signal from pulling the
+centroid across, wide enough to still capture real smiling drift within a
+lane's own strip-to-strip movement. Not rigorously tuned (one image, one
+value tried in the time available); see
+`scripts/curve_trace_anchor_compare.py` (gitignored, left on disk in this
+worktree) for the real-image comparison run.
 """
 
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from gel_extractor.core.lanes import detect_lanes
+from gel_extractor.core.lanes import Lane, detect_lanes
 
 # Number of horizontal strips to slice the image into for per-strip lane
 # detection. Originally guessed at 16 (more strips = finer curvature
@@ -148,6 +194,16 @@ DEFAULT_NUM_STRIPS = 8
 # visibly breaking legitimate curvature tracking (see docstring
 # "Findings").
 DEFAULT_MAX_JUMP_FRACTION = 0.02
+
+# One-sided padding for the anchored-tracing window, as a fraction of the
+# already-detected lane's own width -- see module docstring, "Redesign:
+# anchored tracing". Each strip's centroid search is confined to
+# `[lane.x_start - margin, lane.x_end + margin]`; too wide risks pulling in
+# a neighboring lane's signal (defeating the point of anchoring), too
+# narrow risks clipping real smiling drift at the image's top/bottom where
+# curvature is largest. 25% is a single-image-tuned starting point (see
+# docstring), not rigorously swept.
+DEFAULT_ANCHOR_MARGIN_FRACTION = 0.25
 
 
 @dataclass(frozen=True)
@@ -388,7 +444,13 @@ def trace_lanes(
     max_jump_fraction: float = DEFAULT_MAX_JUMP_FRACTION,
     **detect_lanes_kwargs,
 ) -> list[TracedLane]:
-    """Convenience entry point: strip-detect then track, in one call."""
+    """Convenience entry point: strip-detect then track, in one call.
+
+    Kept for the earlier per-strip-redetection prototype (see module
+    docstring's "Findings" section for why it's not recommended for
+    production use) -- `trace_lanes_from_detected` below is the intended
+    real entry point going forward.
+    """
     strips = detect_lanes_per_strip(signal, num_strips=num_strips, **detect_lanes_kwargs)
     row_centers = [row_center for _, _, row_center in _strip_boundaries(signal.shape[0], num_strips)]
     return track_lanes_across_strips(
@@ -397,3 +459,99 @@ def trace_lanes(
         max_jump_fraction=max_jump_fraction,
         row_centers=row_centers,
     )
+
+
+def trace_lane_from_anchor(
+    signal: np.ndarray,
+    lane: Lane,
+    num_strips: int = DEFAULT_NUM_STRIPS,
+    margin_fraction: float = DEFAULT_ANCHOR_MARGIN_FRACTION,
+) -> TracedLane:
+    """Trace one already-identified lane's local curvature across strips.
+
+    Unlike `trace_lanes`/`detect_lanes_per_strip`, this never re-runs lane
+    *detection* -- `lane` (from `core.lanes.detect_lanes`, called once on
+    the whole image) fixes this lane's identity, x-range, and width. Per
+    strip, only the centroid (weighted center of mass of column intensity)
+    is recomputed, and only within a narrow window
+    `[lane.x_start - margin, lane.x_end + margin]` around the lane's own
+    known position -- `margin = lane_width * margin_fraction`. See module
+    docstring, "Redesign: anchored tracing", for why this avoids the
+    over-segmentation the earlier per-strip-redetection prototype caused.
+
+    A strip whose window has no signal at all (e.g. a genuinely blank
+    strip) carries the last real centroid forward (`StripLane.broken =
+    True`), mirroring `track_lanes_across_strips`'s carry-forward behavior,
+    so `x_at_row` never jumps to a degenerate value.
+    """
+    height, width = signal.shape
+    lane_width = lane.x_end - lane.x_start
+    margin = max(1, int(round(lane_width * margin_fraction)))
+    window_x0 = max(0, lane.x_start - margin)
+    window_x1 = min(width, lane.x_end + margin)
+
+    boundaries = _strip_boundaries(height, num_strips)
+    last_centroid = (lane.x_start + lane.x_end) / 2.0
+    strips: list[StripLane] = []
+    for i, (r0, r1, row_center) in enumerate(boundaries):
+        if r1 <= r0 or window_x1 <= window_x0:
+            strips.append(
+                StripLane(
+                    strip_index=i,
+                    row_center=row_center,
+                    x_start=lane.x_start,
+                    x_end=lane.x_end,
+                    centroid=last_centroid,
+                    broken=True,
+                )
+            )
+            continue
+
+        window = signal[r0:r1, window_x0:window_x1]
+        column_profile = window.sum(axis=0)
+        total = column_profile.sum()
+        if total > 0:
+            xs = np.arange(window_x0, window_x1)
+            centroid = float(np.average(xs, weights=column_profile))
+            last_centroid = centroid
+            broken = False
+        else:
+            centroid = last_centroid
+            broken = True
+
+        strips.append(
+            StripLane(
+                strip_index=i,
+                row_center=row_center,
+                x_start=lane.x_start,
+                x_end=lane.x_end,
+                centroid=centroid,
+                broken=broken,
+            )
+        )
+
+    return TracedLane(track_id=lane.index, strips=strips)
+
+
+def trace_lanes_from_detected(
+    signal: np.ndarray,
+    num_strips: int = DEFAULT_NUM_STRIPS,
+    margin_fraction: float = DEFAULT_ANCHOR_MARGIN_FRACTION,
+    **detect_lanes_kwargs,
+) -> tuple[list[Lane], list[TracedLane]]:
+    """The intended real entry point: anchor lane count/identity, then trace curvature.
+
+    Calls `core.lanes.detect_lanes` once on the whole image (same call
+    `purity.analysis.analyze_image` already makes) to fix the definitive
+    lane count and x-ranges, then traces each lane's local curvature via
+    `trace_lane_from_anchor`. Returns `(lanes, tracks)` -- `lanes` in the
+    same order/count as `core.lanes.detect_lanes` would return alone (so a
+    caller can still tell which lane is the ladder, etc.), `tracks` the
+    parallel list of `TracedLane`s.
+    """
+    lanes = detect_lanes(signal, **detect_lanes_kwargs)
+    tracks = [
+        trace_lane_from_anchor(signal, lane, num_strips=num_strips, margin_fraction=margin_fraction)
+        for lane in lanes
+    ]
+    return lanes, tracks
