@@ -486,6 +486,8 @@ def trace_lane_from_anchor(
     lane: Lane,
     num_strips: int = DEFAULT_NUM_STRIPS,
     margin_fraction: float = DEFAULT_ANCHOR_MARGIN_FRACTION,
+    window_x0_bound: int | None = None,
+    window_x1_bound: int | None = None,
 ) -> TracedLane:
     """Trace one already-identified lane's local curvature across strips.
 
@@ -499,6 +501,15 @@ def trace_lane_from_anchor(
     docstring, "Redesign: anchored tracing", for why this avoids the
     over-segmentation the earlier per-strip-redetection prototype caused.
 
+    `window_x0_bound`/`window_x1_bound` (usually the midpoint to the
+    neighboring lane on each side -- see `trace_lanes_from_detected`) hard-
+    clip the search window so it can never reach into a *neighboring* lane's
+    own column range. Without this, a strip where this lane has genuinely no
+    signal (common near the top/bottom, outside any real band) but a nearby
+    lane does can pick up the neighbor's signal as a false centroid instead
+    of correctly falling back -- found via a real test failure on two
+    closely-spaced synthetic lanes, not a theoretical concern.
+
     A strip whose window has no signal at all (e.g. a genuinely blank
     strip) carries the last real centroid forward (`StripLane.broken =
     True`), mirroring `track_lanes_across_strips`'s carry-forward behavior,
@@ -509,6 +520,10 @@ def trace_lane_from_anchor(
     margin = max(1, int(round(lane_width * margin_fraction)))
     window_x0 = max(0, lane.x_start - margin)
     window_x1 = min(width, lane.x_end + margin)
+    if window_x0_bound is not None:
+        window_x0 = max(window_x0, window_x0_bound)
+    if window_x1_bound is not None:
+        window_x1 = min(window_x1, window_x1_bound)
 
     boundaries = _strip_boundaries(height, num_strips)
     last_centroid = (lane.x_start + lane.x_end) / 2.0
@@ -568,10 +583,26 @@ def trace_lanes_from_detected(
     same order/count as `core.lanes.detect_lanes` would return alone (so a
     caller can still tell which lane is the ladder, etc.), `tracks` the
     parallel list of `TracedLane`s.
+
+    Each lane's search window is clamped to the midpoint to its immediate
+    left/right neighbor (relies on `detect_lanes`'s documented left-to-right
+    ordering) so it can never reach into a neighboring lane's own column
+    range -- see `trace_lane_from_anchor`'s docstring for why that matters.
     """
     lanes = detect_lanes(signal, **detect_lanes_kwargs)
-    tracks = [
-        trace_lane_from_anchor(signal, lane, num_strips=num_strips, margin_fraction=margin_fraction)
-        for lane in lanes
-    ]
+    width = signal.shape[1]
+    tracks = []
+    for i, lane in enumerate(lanes):
+        left_bound = (lanes[i - 1].x_end + lane.x_start) // 2 if i > 0 else 0
+        right_bound = (lane.x_end + lanes[i + 1].x_start) // 2 if i < len(lanes) - 1 else width
+        tracks.append(
+            trace_lane_from_anchor(
+                signal,
+                lane,
+                num_strips=num_strips,
+                margin_fraction=margin_fraction,
+                window_x0_bound=left_bound,
+                window_x1_bound=right_bound,
+            )
+        )
     return lanes, tracks

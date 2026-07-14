@@ -15,7 +15,8 @@ from gel_extractor.core.ladder import (
     calibrate_ladder,
     get_ladder_bands,
 )
-from gel_extractor.core.lanes import Lane, detect_bottom_edge_artifact_start, detect_comb_fringe_end, detect_lanes
+from gel_extractor.core.curve_lanes import TracedLane, extract_curved_profile, trace_lanes_from_detected
+from gel_extractor.core.lanes import Lane, detect_bottom_edge_artifact_start, detect_comb_fringe_end
 
 # Placeholder -- see AGENTS.md Design Decisions ("±15-20% of expected MW,
 # deliberately approximate, to be tuned empirically"). Moved from the
@@ -112,7 +113,14 @@ def analyze_image(
     """
     image = load_image(path)
     signal = to_signal(image)
-    lanes = detect_lanes(signal)
+    # Curved-trace lane detection (this branch's whole point, see
+    # core.curve_lanes module docstring): lane count/identity is still
+    # fixed by the same detect_lanes as before (called once inside
+    # trace_lanes_from_detected), so nothing about *which* lanes exist or
+    # how many changes here -- only how each lane's per-row signal gets
+    # summed (along its traced curve instead of a fixed column range,
+    # see _adaptive_crop_curved below).
+    lanes, tracks = trace_lanes_from_detected(signal)
     if not lanes:
         raise ValueError(f"No lanes detected in {path!r}")
 
@@ -132,8 +140,8 @@ def analyze_image(
     bottom_bound = detect_bottom_edge_artifact_start(signal[:, all_lanes_mask])
 
     ladder_lane = lanes[ladder_idx]
-    ladder_cropped, ladder_top_bound = _adaptive_crop(signal, ladder_lane, bottom_bound)
-    ladder_profile = ladder_cropped.sum(axis=1)
+    ladder_track = tracks[ladder_idx]
+    ladder_profile, ladder_top_bound = _adaptive_crop_curved(signal, ladder_lane, ladder_track, bottom_bound)
 
     calibration: LadderCalibration | None = None
     if known_mws is not None:
@@ -149,20 +157,22 @@ def analyze_image(
             "to fall back to a largest-band heuristic instead."
         )
 
-    sample_lanes = [lane for i, lane in enumerate(lanes) if i != ladder_idx]
+    sample_lane_tracks = [(lane, track) for i, (lane, track) in enumerate(zip(lanes, tracks)) if i != ladder_idx]
 
     if lane_index is not None:
-        if not (1 <= lane_index <= len(sample_lanes)):
-            raise ValueError(f"--lane is out of range: got {lane_index}, have {len(sample_lanes)} sample lane(s)")
-        selected = [(lane_index, sample_lanes[lane_index - 1])]
+        if not (1 <= lane_index <= len(sample_lane_tracks)):
+            raise ValueError(
+                f"--lane is out of range: got {lane_index}, have {len(sample_lane_tracks)} sample lane(s)"
+            )
+        selected = [(lane_index, *sample_lane_tracks[lane_index - 1])]
     else:
-        selected = list(enumerate(sample_lanes, start=1))
+        selected = [(i, lane, track) for i, (lane, track) in enumerate(sample_lane_tracks, start=1)]
 
     results: list[LaneResult] = []
     lane_total_areas: list[float] = []
     lane_debug_info: list[LaneDebugInfo] = []
-    for idx, lane in selected:
-        cropped, top_bound = _adaptive_crop(signal, lane, bottom_bound)
+    for idx, lane, track in selected:
+        curved_profile, top_bound = _adaptive_crop_curved(signal, lane, track, bottom_bound)
         # Each lane's band positions are relative to *its own* adaptive
         # top_bound, but `calibration` was fit against the ladder lane's own
         # top_bound -- if the two differ (comb depth varies lane to lane,
@@ -171,9 +181,11 @@ def analyze_image(
         # calibrating, or MW comes out silently wrong by however much the
         # two crops differ (confirmed as a real bug on a real image, not
         # theoretical -- see AGENTS.md Implementation Status, 2026-07-14).
+        # Unaffected by curved tracing -- top_bound is still a row index,
+        # from the same straight-column comb-fringe detector as before.
         position_offset = top_bound - ladder_top_bound
         result, bands, target_bands, total_area = _analyze_lane_detailed(
-            cropped.sum(axis=1),
+            curved_profile,
             lane_index=idx,
             target_mw=target_mw,
             calibration=calibration,
@@ -356,20 +368,27 @@ def _analyze_lane_detailed(
     )
 
 
-def _adaptive_crop(signal: np.ndarray, lane: Lane, bottom_bound: int) -> tuple[np.ndarray, int]:
-    """Crop one lane to its real resolving-gel content.
+def _adaptive_crop_curved(
+    signal: np.ndarray, lane: Lane, track: TracedLane, bottom_bound: int
+) -> tuple[np.ndarray, int]:
+    """Curved-trace analogue of the old straight-rectangle `_adaptive_crop`.
 
-    Excludes this lane's own comb/well fringe at the top (detected
-    per-lane, since fringe depth varies lane to lane -- see
-    `core.lanes.detect_comb_fringe_end`) and the shared bottom cassette/
-    tape-edge artifact (`bottom_bound`, detected once for the whole image
-    since it's consistent across every lane). Returns `(cropped, top_bound)`
-    -- callers building `LaneDebugInfo` need `top_bound` to correctly place
-    band boxes back onto the full image (see `purity.debug_viz`).
+    Vertical bounds (comb/well fringe at top, shared bottom cassette/tape-
+    edge artifact) are unchanged from the straight-rectangle approach --
+    `detect_comb_fringe_end` still looks at this lane's own straight column
+    range, since fringe depth is a vertical-only concern, unrelated to
+    horizontal lane drift. What changes is *how the per-row signal is
+    summed*: instead of a fixed column range for the whole image height
+    (`lane_columns[top_bound:bottom_bound, :].sum(axis=1)`), it follows
+    `track`'s traced curve per row (`core.curve_lanes.extract_curved_
+    profile`) -- this branch's whole point. Returns `(profile, top_bound)`
+    -- `profile` is already 1D (summed), unlike the old 2D `cropped` array,
+    since nothing else needs the uncollapsed columns.
     """
     lane_columns = signal[:, lane.x_start : lane.x_end]
     top_bound = detect_comb_fringe_end(lane_columns)
-    return lane_columns[top_bound:bottom_bound, :], top_bound
+    curved_profile = extract_curved_profile(signal, track, height=signal.shape[0])
+    return curved_profile[top_bound:bottom_bound], top_bound
 
 
 def _match_target_band(
