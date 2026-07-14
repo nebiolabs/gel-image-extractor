@@ -1,17 +1,17 @@
 %% program-flow.mmd
 %% NOTE: Reflects the purity workflow as actually implemented and tested
-%% (src/gel_extractor/, 36 tests passing) plus the activity workflow's
+%% (src/gel_extractor/, 45 tests passing) plus the activity workflow's
 %% still-conceptual design (see AGENTS.md "Design Decisions" and
 %% "Implementation Status"). Not a full class/sequence diagram -- still a
 %% data-flow sketch, just one grounded in working code on the purity side.
 
 flowchart TD
-    Note["✅ Purity: implemented & tested (36 tests)<br/>⚠ Activity: conceptual only, not built<br/>see AGENTS.md Implementation Status<br/>+ Known Limitations"]
+    Note["✅ Purity: implemented & tested (45 tests)<br/>⚠ Activity: conceptual only, not built<br/>see AGENTS.md Implementation Status<br/>+ Known Limitations"]
 
     Input["Gel image input<br/>(TIFF / PNG / JPG)"]
 
     subgraph Core["core (shared)"]
-        Seg["Lane / grid segmentation"]
+        Seg["Lane / grid segmentation<br/>(horizontal -- no smiling/curvature<br/>handling yet, see Known Limitations)"]
         Ladder["Ladder detection & calibration"]
         BandDet["Band / peak detection<br/>(intensity profile + baseline correction)"]
     end
@@ -19,10 +19,13 @@ flowchart TD
     PurityLabel["purity workflow<br/>implemented (gelx purity analyze)"]
     subgraph PurityWF[" "]
         AutoLane["Auto-detect lanes<br/>(column intensity projection,<br/>baseline-corrected -- real gel<br/>photos aren't on white background)"]
+        AdaptiveCrop["Adaptive vertical crop per lane<br/>(exclude comb/well fringe -- per-lane,<br/>row std-dev based; exclude shared<br/>bottom cassette/tape-edge artifact --<br/>whole-image, IQR-spread based)"]
         LadderCal{"Ladder calibrated?<br/>(best-effort: searches all plausible<br/>size alignments for detected bands,<br/>keeps best fit -- min 3 bands + R²≥0.85)"}
-        MWMatch["Find band(s) nearest<br/>expected MW<br/>(±20% tolerance, placeholder default)"]
+        AnyBands{"Any bands detected<br/>in this lane at all?"}
+        AnyBandsUncal{"Any bands detected<br/>in this lane at all?<br/>(no calibration to match against)"}
+        MWMatch["Find band(s) nearest<br/>expected MW<br/>(±20% tolerance, placeholder default;<br/>positions re-expressed in the ladder<br/>lane's own coordinate frame first)"]
         MatchFound{"Band found within<br/>tolerance for this lane?"}
-        NotFound["Per-lane result:<br/>confidence = not-found<br/>(purity_percent = null)"]
+        NotFound["Per-lane result:<br/>confidence = not-found<br/>(purity_percent = null) --<br/>also the zero-bands-detected case,<br/>never a fabricated 0%"]
         Heuristic["--allow-heuristic:<br/>fallback to largest band<br/>(flagged low-confidence)"]
         ErrorOut["Error: cannot calibrate ladder --<br/>requires --ladder-bands or<br/>--allow-heuristic"]
         PurityCalc["purity % =<br/>target band area / total lane area"]
@@ -30,6 +33,7 @@ flowchart TD
         TableOut["Table (default, stdout)"]
         CsvOut["--csv [PATH]"]
         JsonOut["--json [PATH]"]
+        DebugOut["--debug [PATH]<br/>annotated lane/band image"]
     end
 
     ActivityLabel["activity workflow<br/>Not started -- rule-based planned, not ML"]
@@ -48,16 +52,21 @@ flowchart TD
     BandDet --> GridDet
     PurityLabel -.-> AutoLane
     ActivityLabel -.-> GridDet
-    AutoLane --> LadderCal
-    LadderCal -- yes --> MWMatch --> MatchFound
+    AutoLane --> AdaptiveCrop --> LadderCal
+    LadderCal -- yes --> AnyBands
+    AnyBands -- no --> NotFound
+    AnyBands -- yes --> MWMatch --> MatchFound
     MatchFound -- yes --> PurityCalc
     MatchFound -- "no, heuristic allowed" --> Heuristic --> PurityCalc
     MatchFound -- "no, no flag given" --> NotFound --> LaneResult
-    LadderCal -- "no, heuristic allowed" --> Heuristic
+    LadderCal -- "no, heuristic allowed" --> AnyBandsUncal
+    AnyBandsUncal -- no --> NotFound
+    AnyBandsUncal -- yes --> Heuristic
     LadderCal -- "no, no flag given" --> ErrorOut
     PurityCalc --> LaneResult
     LaneResult --> TableOut
     LaneResult --> CsvOut
     LaneResult --> JsonOut
+    LaneResult --> DebugOut
     GridDet --> Baseline --> Classify --> Heatmap
     Baseline -.-> ExpectedFrag -.-> Classify

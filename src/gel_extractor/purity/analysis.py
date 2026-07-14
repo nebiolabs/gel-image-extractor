@@ -249,6 +249,25 @@ def _analyze_lane_detailed(
     bands = detect_bands(corrected)
     total_area = sum(b.area for b in bands)
 
+    if not bands:
+        # No detected signal at all -- report "not-found" rather than a
+        # fabricated 0% (which would otherwise fall out of _safe_percent(0, 0)
+        # and misleadingly read as "confidently measured, all contaminant").
+        # A lane with nothing detectable hasn't been measured at all -- could
+        # be a genuinely blank/degenerate sample, or a spurious lane detection
+        # (see AGENTS.md Known Limitations, lane over-segmentation).
+        return (
+            LaneResult(
+                lane=lane_index,
+                purity_percent=None,
+                confidence="not-found",
+                target_mw_expected=target_mw,
+                matched_band_mw=None,
+            ),
+            bands,
+            [],
+        )
+
     if calibration is not None:
         matched_bands, matched_mw = _match_target_band(bands, calibration, target_mw, tolerance_percent, position_offset)
         if matched_bands:

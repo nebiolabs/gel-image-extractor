@@ -6,9 +6,8 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (44 tests, 43 passing — 1 known
-failure tracked in AGENTS.md, not silently loosened). **Activity
-workflow: not started.** See `AGENTS.md` for full project scope, data
+**Purity workflow: implemented and tested** (45 tests, all passing).
+**Activity workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
 "Known Limitations" section tracking open issues that shouldn't be silently
@@ -90,7 +89,7 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 44 tests, 43 passing (1 known failure — see AGENTS.md).
+  currently has 45 tests, all passing.
 - **Reporting precision:** `purity_percent` rounds to the nearest whole
   percent (not 1 decimal) — deliberately, given the pipeline's known
   real-world imprecision.

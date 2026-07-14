@@ -53,8 +53,10 @@ def test_dilution_series_purity_is_self_consistent():
     # and the heuristic shows a real, understood bias -- fainter dilution
     # lanes lose their faint contaminant bands below the detection threshold
     # first, which inflates apparent purity as dilution increases. Observed
-    # spread as of 2026-07-13 was ~59 points; this bound exists to catch a
-    # much worse future regression, not to assert current tuning is good.
-    # Expected to tighten substantially once MW-matching can be validated
-    # against a verified ladder.
+    # spread as of 2026-07-14 was ~33 points (a lane with zero detected bands
+    # used to report a fabricated 0% instead of "not-found", inflating the
+    # spread to 82 -- see AGENTS.md Implementation Status); this bound exists
+    # to catch a much worse future regression, not to assert current tuning
+    # is good. Expected to tighten substantially once MW-matching can be
+    # validated against a verified ladder.
     assert spread < 70, f"purity %% spread across dilution lanes was {spread:.1f} points ({purities})"

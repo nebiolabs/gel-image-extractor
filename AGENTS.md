@@ -671,20 +671,29 @@ they're non-obvious and expensive to rediscover:
     coordinate-frame bug had caused. The fusion-protein image improved from
     0/12 lanes matched to 3/12 (still the hardest case -- likely still
     affected by the untouched horizontal over-segmentation problem above).
-  - **One test regression surfaced, root-caused as a pre-existing separate
-    issue, not a new one**: `test_dilution_series_purity_is_self_consistent`
-    now fails (spread 82 vs. the 70-point bound) on HpyCH4IV in
-    `--allow-heuristic` mode (no ladder/calibration -- pure largest-band
-    selection). Traced to lane 10 reporting 0% -- excluding just that one
-    lane drops the spread to 33, comfortably within bound. Lane 10 was
-    already flagged as showing near-zero real band area (`area=2`/`area=4`)
-    earlier the same day -- consistent with it being a spurious/edge lane
-    from the *horizontal* over-segmentation problem above, not something
-    today's vertical-margin work broke. **Not yet resolved how to handle
-    this test** -- discuss with the user before changing its bound or
-    filtering logic.
-  - 44 tests total, 43 passing (the one failure above, left visible rather
-    than silently loosened).
+  - **Test regression, root-caused and fixed 2026-07-14**:
+    `test_dilution_series_purity_is_self_consistent` had failed (spread 82 vs.
+    the 70-point bound) on HpyCH4IV in `--allow-heuristic` mode, traced to
+    lane 10 reporting a fabricated 0%. Confirmed via `--debug`: lane 10 is a
+    spurious lane detection 16px from the image's right edge (isolated by an
+    85px gap from lane 9), with **zero bands detected at all** -- not a real
+    dilution-series sample. The general bug underneath: `_analyze_lane_detailed`
+    computed `total_area = sum(...)` over an empty `bands` list, and
+    `_safe_percent(0, 0)` silently returned `0` -- so "nothing detected" was
+    reported as "0% purity" (implying a confidently-measured, all-contaminant
+    lane) instead of the honest "not-found" the MW-mismatch path already used.
+    **Fixed**: `_analyze_lane_detailed` now returns `confidence="not-found"`,
+    `purity_percent=None` immediately when zero bands are detected, before
+    MW-matching or the heuristic fallback -- so a batch debug run
+    (`scripts/generate_debug_images.py`, added the same day; see "Development"
+    below) that surfaced the identical pattern on a second image
+    (`4.16.26 Protein Purity.tif`, lane 14) is now also handled correctly.
+    Spread on HpyCH4IV dropped to 33, comfortably within the 70-point bound,
+    with no threshold change needed. This is a general fix, not specific to
+    either image or to the still-open horizontal over-segmentation problem
+    below -- a genuinely blank/degenerate real sample lane would hit the same
+    code path and should get the same honest result.
+  - 45 tests total, all passing.
 
 ## Planned Features — Not Yet Built
 
@@ -938,3 +947,11 @@ don't let them drift out of sync.
   numpy/scipy/scikit-image, argparse, pyproject.toml + uv, pytest) and
   "Implementation Status" for the actual package layout (`src/gel_extractor/`,
   `tests/`, `pyproject.toml`, `uv.lock`).
+- **`scripts/` is gitignored (2026-07-14)** — local dev/debug tooling only,
+  not shipped with the package. `scripts/generate_debug_images.py` runs
+  every real Protein Purity example image (with its confirmed target MW from
+  Data Inventory where known, `--allow-heuristic` otherwise) through
+  `gelx purity analyze --debug`, writing annotated images to
+  `data/debug_images/` (renamed from `data/debug images/` the same day) —
+  a quick way to eyeball lane/band detection across the whole example set
+  after a pipeline change, not a substitute for the automated test suite.

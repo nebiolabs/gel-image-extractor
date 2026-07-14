@@ -66,6 +66,18 @@ def test_analyze_lane_no_calibration_without_heuristic_is_not_found():
     assert result.purity_percent is None
 
 
+def test_analyze_lane_no_bands_detected_is_not_found_even_with_heuristic():
+    # A lane with literally nothing detectable (e.g. a blank/degenerate
+    # sample, or a spurious lane detection) must report "not-found", not a
+    # fabricated 0% -- see AGENTS.md Implementation Status, 2026-07-14.
+    profile = np.zeros(300)
+
+    result = analyze_lane(profile, lane_index=1, target_mw=50.0, calibration=None, allow_heuristic=True)
+
+    assert result.confidence == "not-found"
+    assert result.purity_percent is None
+
+
 def test_analyze_lane_sums_doublet_within_tolerance():
     calibration = _flat_calibration()
     target_mw = 50.0
