@@ -123,9 +123,50 @@ without cause:
   validate against and wasn't pursued given the MVP timeline — see the
   curve-tracing prototype entry in Implementation Status for what *was*
   pursued instead.
-- **Interface: CLI for now**, structured so a UI can be layered on top later
-  without a rework (i.e. keep core logic decoupled from any CLI-specific
-  concerns).
+- **Interface: hosted inside `ebase`, single image upload — decided
+  2026-07-16.** Not a standalone CLI executable distributed to end users.
+  Instead hosted internally inside `ebase` (an existing internal app with a
+  UI); a user uploads one gel image and picks settings in the UI, which the
+  backend translates into CLI flags before calling the same underlying
+  pipeline. Core logic stays decoupled from CLI-specific concerns
+  specifically so this translation stays thin. This resolves a live
+  dependency-weight question head-on: a standalone-executable path would
+  have forced bundling `sam-zeroshot`'s real dependency footprint (measured
+  2026-07-16: torch alone is 501MB installed, vs. a 169MB base pipeline
+  venv without it — the checkpoint itself is only 39MB, torch dwarfs it) onto
+  every end-user machine, including real offline/checkpoint-download risk on
+  locked-down lab computers. Hosting server-side makes that a one-time
+  server-side cost instead of a per-user tax, removing the concern — see the
+  lane-detection-alternatives entry in Implementation Status for where
+  `sam-zeroshot` came from.
+- **SAM backend: no persistent warm model — decided 2026-07-16, revisit if
+  usage grows.** Given expected usage of only ~1-2 analyses/week, keeping
+  `sam-zeroshot`'s ~600MB dependency (torch + MobileSAM checkpoint) resident
+  in memory continuously to save latency on that few requests isn't worth
+  the standing memory cost. Measured directly what the trade-off actually
+  costs: a cold process pays ~3.7s fixed overhead before any real work
+  (import torch 1.3s + import `mobile_sam`/`core.sam_lanes` 0.85s + load
+  model+checkpoint from disk 1.5s), plus ~0.4s for the one-time-per-image
+  encoder pass (a second warm call is barely faster — 0.36s vs. 0.43s — so
+  the fixed cost is import/load, not model warm-up per se). Full request
+  lands around 5-8s total including per-lane inference, vs. a couple
+  seconds warm. Judged an acceptable one-time tax for infrequent use, not a
+  standing resource cost — reversible without an architecture rewrite if
+  usage patterns change later. Only affects `sam-zeroshot`; the rectangle
+  and Viterbi methods have no model to load and aren't affected by this
+  decision either way. **Caveat to confirm at implementation time**: whether
+  this cold-start cost is paid on literally every request depends on how the
+  job actually runs — a genuinely fresh process/container per request pays
+  it every time, whereas a long-lived worker (e.g. a Delayed Job worker that
+  stays running between jobs) would only pay it on that worker's first SAM
+  job, not every one. Don't assume either way until the Delayed Job wiring
+  below is actually decided.
+- **Queueing (Delayed Job) deferred pending real latency data — decided
+  2026-07-16.** NEB has Delayed Job available internally; whether gel
+  analysis (particularly the `sam-zeroshot` method, given the cold-start
+  cost above) needs to run on a queue rather than inline in the
+  request/response cycle will be decided from real measured latency in the
+  actual `ebase`-hosted environment once it exists, not guessed at now.
 - **Purity workflow: auto-detect lanes, no manual coordinates.** Lane
   auto-detection for a single small gel is a well-established classical CV
   technique (sum pixel columns → find the valleys between lanes in the
@@ -705,13 +746,25 @@ recorded here specifically so they aren't lost or re-litigated from scratch.
 
 ## Open Questions
 
-No open internal design/architecture questions remain as of this update
-(2026-07-14). This section is for questions Jacob and Claude can resolve
-through design discussion alone. Questions that need an answer from the
-domain-expert end users (the project submitters, reviewers, etc.) instead
-live in `QUESTIONS_FOR_USERS.md` — check there for the current accrued list before
+This section is for questions Jacob and Claude can resolve through design
+discussion alone. Questions that need an answer from the domain-expert end
+users (the project submitters, reviewers, etc.) instead live in
+`QUESTIONS_FOR_USERS.md` — check there for the current accrued list before
 assuming a piece of domain knowledge (e.g. "is this ladder the standard one")
 rather than guessing.
+
+- **Is the 3-method shortlist (rectangle default + `viterbi-lane-tracing` +
+  `sam-zeroshot`) itself confirmed, or still just a proposal?** (2026-07-16)
+  Proposed after the lane-detection-alternatives Workflow exploration
+  (Implementation Status) as the set worth exposing via a `--method` flag,
+  with rectangle as the safe default — but not yet explicitly confirmed by
+  Jacob as a final decision, only discussed alongside the hosting/warm-start
+  questions that *were* confirmed. Also unconfirmed: whether
+  `curve-tracing-lane-detection` should be considered superseded by
+  `viterbi-lane-tracing` (same idea, more principled path-finding, no
+  measurable regressions found so far) and dropped, given curve-tracing
+  itself showed no accuracy win over straight rectangles on the confirmed
+  ground-truth set.
 
 ## Data Inventory
 

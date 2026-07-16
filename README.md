@@ -99,7 +99,13 @@ See `AGENTS.md` for the full rationale.
   dependencies; `pytest` for testing.
 - **Interface:** one CLI entry point with subcommands (`gelx purity analyze
   gel.tif ...`), not separate binaries per workflow. Structured so a UI can
-  be layered on later. Every flag (`--lane`,
+  be layered on later — decided 2026-07-16 that this means hosting inside
+  `ebase` (an internal NEB app), with a single-image-upload UI whose
+  settings translate to CLI flags server-side, not a standalone executable
+  distributed to end users; see `AGENTS.md`'s Design Decisions for the full
+  rationale (including why that choice matters for optional heavier
+  dependencies like the `sam-zeroshot` lane-detection method). Every flag
+  (`--lane`,
   `--ladder-bands`, `--allow-heuristic`, etc.) must be clearly documented in
   the CLI's own `--help` output, not just in external docs — end users of
   this tool aren't expected to be CLI-comfortable.
