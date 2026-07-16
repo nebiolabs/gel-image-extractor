@@ -754,40 +754,63 @@ kept here is every decision, root cause, and "don't retry X" warning.
     if *every* method fails (Unix-style "true failure" semantics); a
     partial success (some methods worked, one didn't) still exits 0,
     matching the "one bad method never aborts the others" design.
-  - **Methods registered so far**: `rectangle` (`maturity=stable`, unchanged
-    behavior) and `viterbi` (`maturity=promising`, DP/Viterbi curved
-    tracing — see the lane-detection-alternatives entry above for its own
-    validation history). Re-verified end to end on real images during this
-    phase, including the project's standing hard case (`R-236_PDEV1452`):
-    still shows the same known 13-boxes-on-~9-real-lanes over-segmentation
-    (expected — this phase only reshapes per-lane profiles, doesn't touch
-    lane count), with the viterbi curve visibly tracking real drift within
-    several lanes in the rendered debug image.
-  - **Tests**: new `tests/test_purity_methods.py` (registry contents,
-    per-adapter success + rescue-path coverage for both a ladder-
-    calibration failure and a missing file, `run_all_methods` isolation)
-    plus extensions to `test_purity_cli.py` (`--method`/`--method all`,
-    including the all-methods-failed exit-code case) and
-    `test_purity_debug_viz.py` (banner rendering colored by maturity,
-    centerline/annotation rendering without error) — 69 tests passing on
-    this branch (51 pre-existing + 18 new), all matching existing
-    conventions (no pixel-perfect assertions beyond the banner's own solid
-    fill color, dimension/mode checks for rendering, stdout/exit-code/
-    Traceback-absence checks for the CLI).
-  - **Not yet done, later phases per the implementation plan**: `ridge`/
-    `snake` (Phase B); `shared_row`/`blob_graph` (Phase C — the highest-
-    friction checkpoint, since `blob_graph` doesn't anchor lane count to
-    `detect_lanes` at all, needing the `lane_numbering_caveat` plumbing
-    already built but not yet exercised); `sam` (Phase D, gated on fixing
-    its 2 confirmed bugs first, already decided separately). A Workflow
-    (parallel multi-agent) approach was explicitly considered and rejected
-    for this integration work — unlike the original 6-way exploration
-    (genuinely independent, disposable prototypes), this is one evolving,
-    tightly-coupled system where parallel agents would collide on the same
-    shared files (the registry, the CLI, debug_viz) with nothing independent
-    yet to hand them; a parallel adversarial code-review pass once all
-    phases are built, before merging to `main`, was identified as the
-    right place for that pattern instead.
+  - **Methods registered, Phase A**: `rectangle` (`maturity=stable`,
+    unchanged behavior) and `viterbi` (`maturity=promising`, DP/Viterbi
+    curved tracing — see the lane-detection-alternatives entry above for
+    its own validation history). Re-verified end to end on real images
+    during this phase, including the project's standing hard case
+    (`R-236_PDEV1452`): still shows the same known 13-boxes-on-~9-real-lanes
+    over-segmentation (expected — this phase only reshapes per-lane
+    profiles, doesn't touch lane count), with the viterbi curve visibly
+    tracking real drift within several lanes in the rendered debug image.
+  - **Methods registered, Phase B (same day)**: `ridge` and `snake`, both
+    `maturity=experimental`. Neither module's own standalone wrapper
+    (`analyze_image_ridge`, and `snake_lanes` never had one) preserves
+    per-lane `Band` lists — both discard them, keeping only final
+    `LaneResult`s — so both adapters instead build a `crop_lane` from each
+    module's lower-level primitives (`compute_ridge_response`/
+    `trace_centerline` for ridge; `trace_and_extract_profile` for snake),
+    the same pattern `viterbi`'s adapter already used, needed here
+    specifically so `--debug` still shows real band boxes, not just a bare
+    curve line. `snake`'s adapter additionally catches a single lane's
+    trace failure *inside* `crop_lane` itself, falling back to that one
+    lane's plain rectangle crop rather than failing the whole image —
+    matching the plan's per-lane (not just per-method) rescue requirement.
+    Verified end to end on real images: both ran cleanly on `R-236_PDEV1452`
+    (13 lanes, no crashes, same known over-segmentation, as expected).
+    `snake` produced visibly lower purity numbers than `rectangle` on
+    `8.6.25 Protein Purity.tif` — checked this wasn't a bug by inspecting
+    the ladder lane's raw traced centerline directly (stayed at x=354-391,
+    well inside its own x_start/x_end=341-441 lane box) rather than trusting
+    a visual first impression of the rendered curve, which looked more
+    dramatic than the underlying numbers actually were.
+  - **Tests**: `tests/test_purity_methods.py` (registry contents, one
+    success test per method, rescue-path coverage for a ladder-calibration
+    failure and a missing file — both loops now iterate `METHOD_REGISTRY`
+    directly so they don't need editing every phase — `run_all_methods`
+    isolation) plus `test_purity_cli.py` (`--method`/`--method all`,
+    including the all-methods-failed exit-code case, also registry-driven
+    now instead of hardcoding method names) and `test_purity_debug_viz.py`
+    (banner rendering colored by maturity, centerline/annotation rendering
+    without error) — 71 tests passing on this branch (51 pre-existing + 20
+    new across both phases), all matching existing conventions (no
+    pixel-perfect assertions beyond the banner's own solid fill color,
+    dimension/mode checks for rendering, stdout/exit-code/Traceback-absence
+    checks for the CLI).
+  - **Not yet done, later phases per the implementation plan**:
+    `shared_row`/`blob_graph` (Phase C — the highest-friction checkpoint,
+    since `blob_graph` doesn't anchor lane count to `detect_lanes` at all,
+    needing the `lane_numbering_caveat` plumbing already built but not yet
+    exercised); `sam` (Phase D, gated on fixing its 2 confirmed bugs first,
+    already decided separately). A Workflow (parallel multi-agent) approach
+    was explicitly considered and rejected for this integration work —
+    unlike the original 6-way exploration (genuinely independent,
+    disposable prototypes), this is one evolving, tightly-coupled system
+    where parallel agents would collide on the same shared files (the
+    registry, the CLI, debug_viz) with nothing independent yet to hand
+    them; a parallel adversarial code-review pass once all phases are
+    built, before merging to `main`, was identified as the right place for
+    that pattern instead.
 
 ## Planned Features — Not Yet Built
 

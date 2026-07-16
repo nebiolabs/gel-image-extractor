@@ -22,11 +22,16 @@ def _write_synthetic_gel(tmp_path, synthetic_gel):
     return path, known_mws
 
 
-def test_registry_contains_rectangle_and_viterbi():
-    assert "rectangle" in METHOD_REGISTRY
-    assert "viterbi" in METHOD_REGISTRY
-    assert METHOD_REGISTRY["rectangle"].maturity == "stable"
-    assert METHOD_REGISTRY["viterbi"].maturity == "promising"
+def test_registry_contains_all_phase_a_and_b_methods():
+    expected_maturity = {
+        "rectangle": "stable",
+        "viterbi": "promising",
+        "ridge": "experimental",
+        "snake": "experimental",
+    }
+    for key, maturity in expected_maturity.items():
+        assert key in METHOD_REGISTRY
+        assert METHOD_REGISTRY[key].maturity == maturity
     # Every non-stable method must ship with a non-empty caveats list -- the
     # confidence-labeling requirement isn't just a tier string, see
     # purity.methods module docstring.
@@ -63,6 +68,28 @@ def test_run_method_viterbi_succeeds_and_populates_centerline(tmp_path, syntheti
     assert all(lane.centerline is not None for lane in outcome.debug_info.lanes)
 
 
+def test_run_method_ridge_succeeds_and_populates_centerline(tmp_path, synthetic_gel):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+
+    outcome = run_method("ridge", str(path), target_mw=25.0, ladder_bands=known_mws)
+
+    assert outcome.ok
+    assert outcome.method == "ridge"
+    assert outcome.maturity == "experimental"
+    assert all(lane.centerline is not None for lane in outcome.debug_info.lanes)
+
+
+def test_run_method_snake_succeeds_and_populates_centerline(tmp_path, synthetic_gel):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+
+    outcome = run_method("snake", str(path), target_mw=25.0, ladder_bands=known_mws)
+
+    assert outcome.ok
+    assert outcome.method == "snake"
+    assert outcome.maturity == "experimental"
+    assert all(lane.centerline is not None for lane in outcome.debug_info.lanes)
+
+
 def test_run_method_unknown_key_raises():
     try:
         run_method("not-a-real-method", "unused.png", target_mw=25.0)
@@ -78,7 +105,7 @@ def test_run_method_rescues_ladder_calibration_failure_into_outcome(tmp_path, sy
     # MethodOutcome.error, never let it raise out of run_method.
     path, _ = _write_synthetic_gel(tmp_path, synthetic_gel)
 
-    for key in ("rectangle", "viterbi"):
+    for key in METHOD_REGISTRY:
         outcome = run_method(key, str(path), target_mw=25.0)
         assert not outcome.ok
         assert outcome.error is not None
@@ -86,7 +113,7 @@ def test_run_method_rescues_ladder_calibration_failure_into_outcome(tmp_path, sy
 
 
 def test_run_method_rescues_missing_file_into_outcome():
-    for key in ("rectangle", "viterbi"):
+    for key in METHOD_REGISTRY:
         outcome = run_method(key, "/no/such/file.tif", target_mw=25.0, allow_heuristic=True)
         assert not outcome.ok
         assert "file.tif" in outcome.error or "No such file" in outcome.error

@@ -20,7 +20,18 @@ from pathlib import Path
 import numpy as np
 
 from gel_extractor.core.image_io import load_image, to_signal
-from gel_extractor.core.lanes import detect_comb_fringe_end
+from gel_extractor.core.lanes import detect_comb_fringe_end, detect_lanes
+from gel_extractor.core.ridge_lanes import (
+    DEFAULT_MIN_ROW_SMOOTHING_SIGMA as RIDGE_MIN_ROW_SMOOTHING_SIGMA,
+    DEFAULT_PROFILE_HALF_WIDTH_FRACTION as RIDGE_PROFILE_HALF_WIDTH_FRACTION,
+    DEFAULT_ROW_SMOOTHING_FRACTION as RIDGE_ROW_SMOOTHING_FRACTION,
+    _lane_neighbor_bounds as _ridge_lane_neighbor_bounds,
+    _reference_lane_width as _ridge_reference_lane_width,
+    compute_ridge_response,
+    extract_curved_profile as ridge_extract_curved_profile,
+    trace_centerline,
+)
+from gel_extractor.core.snake_lanes import trace_and_extract_profile
 from gel_extractor.core.viterbi_lanes import extract_curved_profile, trace_lanes_from_detected
 from gel_extractor.purity.analysis import (
     AnalysisDebugInfo,
@@ -29,6 +40,7 @@ from gel_extractor.purity.analysis import (
     LadderNotCalibratedError,
     LaneResult,
     _analyze_signal,
+    _default_crop_lane,
     analyze_image,
 )
 
@@ -164,6 +176,132 @@ def _run_viterbi(
     )
 
 
+def _run_ridge(
+    path: Path | str,
+    target_mw: float,
+    ladder: str | None = None,
+    ladder_bands: list[float] | None = None,
+    ladder_lane_index: int | None = None,
+    lane_index: int | None = None,
+    tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
+    allow_heuristic: bool = False,
+) -> MethodOutcome:
+    """Ridge/vesselness-filter (`skimage.filters.meijering`) curved lane
+    tracing -- see `core.ridge_lanes` for the algorithm. Its own
+    `analyze_image_ridge` discards each lane's `Band` list (only keeps
+    `LaneResult`s), so this adapter uses its lower-level primitives
+    (`compute_ridge_response`/`trace_centerline`) as a `crop_lane` instead of
+    calling that function directly -- the same reason `viterbi` isn't called
+    via any standalone wrapper, and needed here for real band boxes in
+    `--debug` output, not just a curve line.
+    """
+    info = METHOD_REGISTRY["ridge"]
+    try:
+        image = load_image(path)
+        signal = to_signal(image)
+        lanes = detect_lanes(signal)
+        if not lanes:
+            return MethodOutcome(method=info.key, maturity=info.maturity, error=f"No lanes detected in {path!r}")
+
+        width = signal.shape[1]
+        reference_width = _ridge_reference_lane_width(lanes)
+        neighbor_bounds = _ridge_lane_neighbor_bounds(lanes, width, reference_width)
+        bounds_by_index = {lane.index: bounds for lane, bounds in zip(lanes, neighbor_bounds)}
+        ridge_response = compute_ridge_response(signal, reference_width)
+
+        def crop_lane(signal: np.ndarray, lane, bottom_bound: int):
+            left_bound, right_bound = bounds_by_index[lane.index]
+            top_bound = detect_comb_fringe_end(signal[:, lane.x_start : lane.x_end])
+            n_rows = max(bottom_bound - top_bound, 0)
+            row_smoothing_sigma = max(n_rows * RIDGE_ROW_SMOOTHING_FRACTION, RIDGE_MIN_ROW_SMOOTHING_SIGMA)
+            centers = trace_centerline(
+                ridge_response, lane, left_bound, right_bound, top_bound, bottom_bound, row_smoothing_sigma
+            )
+            half_width = (lane.x_end - lane.x_start) * RIDGE_PROFILE_HALF_WIDTH_FRACTION
+            profile = ridge_extract_curved_profile(signal, centers, top_bound, half_width, left_bound, right_bound)
+            centerline = Centerline(rows=np.arange(top_bound, bottom_bound), xs=centers)
+            return profile, top_bound, centerline
+
+        results, ladder_idx, debug_info = _analyze_signal(
+            signal,
+            path,
+            target_mw,
+            ladder=ladder,
+            ladder_bands=ladder_bands,
+            ladder_lane_index=ladder_lane_index,
+            lane_index=lane_index,
+            tolerance_percent=tolerance_percent,
+            allow_heuristic=allow_heuristic,
+            crop_lane=crop_lane,
+        )
+    except (LadderNotCalibratedError, ValueError) as exc:
+        return MethodOutcome(method=info.key, maturity=info.maturity, error=str(exc))
+    except Exception as exc:  # noqa: BLE001 -- defense in depth, see module docstring
+        return MethodOutcome(method=info.key, maturity=info.maturity, error=f"{type(exc).__name__}: {exc}")
+    return MethodOutcome(
+        method=info.key, maturity=info.maturity, results=results, ladder_lane_index=ladder_idx, debug_info=debug_info
+    )
+
+
+def _run_snake(
+    path: Path | str,
+    target_mw: float,
+    ladder: str | None = None,
+    ladder_bands: list[float] | None = None,
+    ladder_lane_index: int | None = None,
+    lane_index: int | None = None,
+    tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
+    allow_heuristic: bool = False,
+) -> MethodOutcome:
+    """Deformable active-contour ("snake") lane tracing -- see
+    `core.snake_lanes`. Unlike the other per-lane methods, a single lane's
+    snake can fail to converge without the whole method being unusable --
+    `crop_lane` catches that *per lane* and falls back to the plain
+    rectangle crop for just that one lane, rather than failing the whole
+    image (per the implementation plan's Phase B note).
+    """
+    info = METHOD_REGISTRY["snake"]
+    try:
+        image = load_image(path)
+        signal = to_signal(image)
+        lanes = detect_lanes(signal)
+        if not lanes:
+            return MethodOutcome(method=info.key, maturity=info.maturity, error=f"No lanes detected in {path!r}")
+        position_by_index = {lane.index: position for position, lane in enumerate(lanes)}
+
+        def crop_lane(signal: np.ndarray, lane, bottom_bound: int):
+            position = position_by_index[lane.index]
+            try:
+                profile, top_bound, snake = trace_and_extract_profile(signal, lanes, position, bottom_bound)
+            except Exception:  # noqa: BLE001 -- per-lane rescue, see docstring above
+                return _default_crop_lane(signal, lane, bottom_bound)
+            rows = np.arange(top_bound, bottom_bound)
+            order = np.argsort(snake[:, 0])
+            xs = np.interp(rows, snake[order, 0], snake[order, 1])
+            centerline = Centerline(rows=rows, xs=xs)
+            return profile, top_bound, centerline
+
+        results, ladder_idx, debug_info = _analyze_signal(
+            signal,
+            path,
+            target_mw,
+            ladder=ladder,
+            ladder_bands=ladder_bands,
+            ladder_lane_index=ladder_lane_index,
+            lane_index=lane_index,
+            tolerance_percent=tolerance_percent,
+            allow_heuristic=allow_heuristic,
+            crop_lane=crop_lane,
+        )
+    except (LadderNotCalibratedError, ValueError) as exc:
+        return MethodOutcome(method=info.key, maturity=info.maturity, error=str(exc))
+    except Exception as exc:  # noqa: BLE001 -- defense in depth, see module docstring
+        return MethodOutcome(method=info.key, maturity=info.maturity, error=f"{type(exc).__name__}: {exc}")
+    return MethodOutcome(
+        method=info.key, maturity=info.maturity, results=results, ladder_lane_index=ladder_idx, debug_info=debug_info
+    )
+
+
 METHOD_REGISTRY: dict[str, MethodInfo] = {
     "rectangle": MethodInfo(
         key="rectangle",
@@ -183,6 +321,37 @@ METHOD_REGISTRY: dict[str, MethodInfo] = {
             "real images with no per-lane ground truth to say which is more correct.",
         ],
         adapter=_run_viterbi,
+    ),
+    "ridge": MethodInfo(
+        key="ridge",
+        label="Ridge/vesselness-filter curved tracing (Frangi-style)",
+        maturity="experimental",
+        caveats=[
+            "Only reshapes each already-identified lane's profile -- does not fix lane "
+            "over/under-segmentation (detect_lanes's lane count is reused unchanged).",
+            "Real, unresolved tuning tension: more row-smoothing sometimes tightens "
+            "agreement with the rectangle baseline and sometimes worsens it sharply on "
+            "the same real image set -- not swept away by a single 'smoother is better' fix.",
+            "Per-lane purity has diverged from rectangle by as much as ~95 points on a "
+            "single real lane in prior validation -- treat any large delta with suspicion, "
+            "not automatically as an improvement.",
+        ],
+        adapter=_run_ridge,
+    ),
+    "snake": MethodInfo(
+        key="snake",
+        label="Deformable active-contour tracing (snake)",
+        maturity="experimental",
+        caveats=[
+            "Only reshapes each already-identified lane's profile -- does not fix lane "
+            "over/under-segmentation (detect_lanes's lane count is reused unchanged).",
+            "Deliberately rigid (low alpha, moderate-high beta) -- can't represent a "
+            "genuinely sharp real kink in a lane's path, only gentle drift.",
+            "A single lane's snake failing to converge falls back to that one lane's plain "
+            "rectangle crop rather than failing the whole image -- check --debug if a "
+            "particular lane looks like a straight line when others show real curvature.",
+        ],
+        adapter=_run_snake,
     ),
 }
 

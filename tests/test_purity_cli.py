@@ -4,6 +4,7 @@ import numpy as np
 from skimage.io import imsave
 
 from gel_extractor.cli import main
+from gel_extractor.purity.methods import METHOD_REGISTRY
 
 
 def _write_synthetic_gel(tmp_path, synthetic_gel):
@@ -207,7 +208,7 @@ def test_cli_analyze_method_all_json_has_one_entry_per_method(tmp_path, syntheti
     assert exit_code == 0
     payload = json.loads(captured.out)
     methods = {m["method"] for m in payload["methods"]}
-    assert methods == {"rectangle", "viterbi"}
+    assert methods == set(METHOD_REGISTRY)
     for entry in payload["methods"]:
         assert entry["results"][0]["confidence"] == "mw-matched"
 
@@ -226,8 +227,8 @@ def test_cli_analyze_method_all_writes_one_debug_image_per_method(tmp_path, synt
     )
 
     assert exit_code == 0
-    assert (tmp_path / "out_debug_rectangle.png").exists()
-    assert (tmp_path / "out_debug_viterbi.png").exists()
+    for key in METHOD_REGISTRY:
+        assert (tmp_path / f"out_debug_{key}.png").exists()
 
 
 def test_cli_analyze_method_all_exits_nonzero_when_every_method_fails(tmp_path, capsys):
