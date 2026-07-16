@@ -1,8 +1,10 @@
+from dataclasses import replace
+
 import numpy as np
 from skimage.io import imsave
 
-from gel_extractor.purity.analysis import analyze_image
-from gel_extractor.purity.debug_viz import render_debug_image
+from gel_extractor.purity.analysis import Centerline, analyze_image
+from gel_extractor.purity.debug_viz import MATURITY_BANNER_COLOR, render_debug_image
 
 
 def _write_synthetic_gel_with_contaminant(tmp_path, synthetic_gel):
@@ -85,3 +87,70 @@ def test_render_debug_image_handles_not_found_lane(tmp_path, synthetic_gel):
     # Should render without error even when nothing matched.
     canvas = render_debug_image(image, results, debug_info)
     assert canvas.size == (image.shape[1], image.shape[0])
+
+
+def test_render_debug_image_draws_method_banner_colored_by_maturity(tmp_path, synthetic_gel):
+    path, raw_image = _write_synthetic_gel_with_contaminant(tmp_path, synthetic_gel)
+    results, ladder_lane_index, debug_info = analyze_image(
+        str(path), target_mw=25.0, ladder_bands=[100.0, 50.0, 25.0, 12.5, 6.25], tolerance_percent=17.5
+    )
+
+    canvas = render_debug_image(raw_image, results, debug_info, method="viterbi", maturity="promising")
+    pixels = np.array(canvas)
+
+    # Banner spans the top 17px (see _draw_method_banner) filled with that
+    # maturity's registered color -- check a pixel well inside the band,
+    # away from the text glyphs drawn on top of it.
+    assert tuple(pixels[8, canvas.width - 5]) == MATURITY_BANNER_COLOR["promising"]
+
+
+def test_render_debug_image_without_method_draws_no_banner(tmp_path, synthetic_gel):
+    path, raw_image = _write_synthetic_gel_with_contaminant(tmp_path, synthetic_gel)
+    results, ladder_lane_index, debug_info = analyze_image(
+        str(path), target_mw=25.0, ladder_bands=[100.0, 50.0, 25.0, 12.5, 6.25], tolerance_percent=17.5
+    )
+
+    canvas = render_debug_image(raw_image, results, debug_info)
+    pixels = np.array(canvas)
+
+    # No method given (today's plain rectangle call pattern, unchanged) ->
+    # no banner fill; the top-right corner pixel stays whatever the
+    # underlying image/lane-box rendering produced, never a maturity color.
+    assert tuple(pixels[8, canvas.width - 5]) not in MATURITY_BANNER_COLOR.values()
+
+
+def test_render_debug_image_draws_centerline_without_error(tmp_path, synthetic_gel):
+    path, raw_image = _write_synthetic_gel_with_contaminant(tmp_path, synthetic_gel)
+    results, ladder_lane_index, debug_info = analyze_image(
+        str(path), target_mw=25.0, ladder_bands=[100.0, 50.0, 25.0, 12.5, 6.25], tolerance_percent=17.5
+    )
+
+    sample_lane_debug = next(lane for lane in debug_info.lanes if not lane.is_ladder)
+    rows = np.arange(sample_lane_debug.top_bound, sample_lane_debug.bottom_bound)
+    mid_x = (sample_lane_debug.x_start + sample_lane_debug.x_end) / 2.0
+    centerline = Centerline(rows=rows, xs=np.full(rows.shape, mid_x))
+    lanes_with_curve = [
+        replace(lane, centerline=centerline) if lane is sample_lane_debug else lane for lane in debug_info.lanes
+    ]
+    debug_info_with_curve = replace(debug_info, lanes=lanes_with_curve)
+
+    canvas = render_debug_image(raw_image, results, debug_info_with_curve)
+
+    assert canvas.size == (raw_image.shape[1], raw_image.shape[0])
+
+
+def test_render_debug_image_draws_annotation_without_error(tmp_path, synthetic_gel):
+    path, raw_image = _write_synthetic_gel_with_contaminant(tmp_path, synthetic_gel)
+    results, ladder_lane_index, debug_info = analyze_image(
+        str(path), target_mw=25.0, ladder_bands=[100.0, 50.0, 25.0, 12.5, 6.25], tolerance_percent=17.5
+    )
+
+    sample_lane_debug = next(lane for lane in debug_info.lanes if not lane.is_ladder)
+    lanes_with_annotation = [
+        replace(lane, annotation="shifted +3px") if lane is sample_lane_debug else lane for lane in debug_info.lanes
+    ]
+    debug_info_with_annotation = replace(debug_info, lanes=lanes_with_annotation)
+
+    canvas = render_debug_image(raw_image, results, debug_info_with_annotation)
+
+    assert canvas.size == (raw_image.shape[1], raw_image.shape[0])

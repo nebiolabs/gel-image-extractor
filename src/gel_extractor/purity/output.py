@@ -13,12 +13,28 @@ from pathlib import Path
 
 from gel_extractor.purity.analysis import LaneResult
 
-FIELDS = ["lane", "purity_percent", "confidence", "target_mw_expected", "matched_band_mw", "low_signal"]
+FIELDS = [
+    "method",
+    "maturity",
+    "lane",
+    "purity_percent",
+    "confidence",
+    "target_mw_expected",
+    "matched_band_mw",
+    "low_signal",
+]
 
 
-def to_records(results: list[LaneResult]) -> list[dict]:
+def to_records(results: list[LaneResult], method: str, maturity: str) -> list[dict]:
+    """`method`/`maturity` are required, not optional -- every output row must
+    say which lane-geometry method produced it and how much to trust it (see
+    `purity.methods`), including today's single-method default, not just a
+    future multi-method mode.
+    """
     return [
         {
+            "method": method,
+            "maturity": maturity,
             "lane": r.lane,
             "purity_percent": r.purity_percent,
             "confidence": r.confidence,
@@ -30,9 +46,9 @@ def to_records(results: list[LaneResult]) -> list[dict]:
     ]
 
 
-def format_table(results: list[LaneResult], ladder_lane_index: int) -> str:
+def format_table(results: list[LaneResult], ladder_lane_index: int, method: str, maturity: str) -> str:
     total_lanes = len(results) + 1
-    header = f"Ladder detected in lane {ladder_lane_index + 1} of {total_lanes} total lanes."
+    header = f"Method: {method} ({maturity}). Ladder detected in lane {ladder_lane_index + 1} of {total_lanes} total lanes."
 
     col = {"lane": 4, "purity": 10, "confidence": 12, "mw": 12, "flag": 11}
     title_row = (
@@ -51,17 +67,30 @@ def format_table(results: list[LaneResult], ladder_lane_index: int) -> str:
     return header + "\n" + "\n".join(rows)
 
 
-def format_csv(results: list[LaneResult]) -> str:
+def format_csv(results: list[LaneResult], method: str, maturity: str) -> str:
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=FIELDS)
     writer.writeheader()
-    writer.writerows(to_records(results))
+    writer.writerows(to_records(results, method, maturity))
     return buf.getvalue()
 
 
-def format_json(results: list[LaneResult], ladder_lane_index: int) -> str:
-    payload = {"ladder_lane": ladder_lane_index + 1, "results": to_records(results)}
-    return json.dumps(payload, indent=2)
+def to_payload(results: list[LaneResult], ladder_lane_index: int, method: str, maturity: str) -> dict:
+    """The dict a single method's JSON output serializes -- exposed
+    separately from `format_json` so `--method all` (see `purity.cli`) can
+    assemble several methods' payloads into one combined JSON document
+    without round-tripping through a JSON string first.
+    """
+    return {
+        "method": method,
+        "maturity": maturity,
+        "ladder_lane": ladder_lane_index + 1,
+        "results": to_records(results, method, maturity),
+    }
+
+
+def format_json(results: list[LaneResult], ladder_lane_index: int, method: str, maturity: str) -> str:
+    return json.dumps(to_payload(results, ladder_lane_index, method, maturity), indent=2)
 
 
 def write_output(content: str, destination: str | None) -> None:

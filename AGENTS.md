@@ -692,6 +692,102 @@ kept here is every decision, root cause, and "don't retry X" warning.
   `LadderNotCalibratedError`/`ValueError` handling) and printed as a single
   `error: ...` line, matching how every other CLI failure mode already
   behaved. MVP polish, not a design change.
+- **Multi-method lane detection, Phase A shipped (2026-07-16, branch
+  `multi-method-lane-detection`, not yet merged to `main`).** Following the
+  6-approach Workflow exploration above, Jacob decided to integrate all 6
+  into the real pipeline behind a method-selection mechanism rather than
+  pick one winner from thin data — real `ebase` usage is meant to generate
+  the comparative data this project's own 15-image validation can't. Every
+  output must very clearly label each method's confidence/maturity tier
+  (firm product requirement), and every method needs a rescue block since
+  several have documented crash modes.
+  - **New `purity/methods.py`**: a `MethodInfo`/`MethodOutcome` registry +
+    per-method adapter pattern. Each adapter calls its prototype's own real
+    entry point inside a try/except covering documented failure modes,
+    normalizing into one `MethodOutcome` shape (`results`/`ladder_lane_
+    index`/`debug_info` on success, `error` on failure — never a raised
+    exception past the adapter boundary). Prototype modules themselves stay
+    unmodified; only the small adapter functions are new code.
+  - **`purity/analysis.py` refactored, behavior-preserving**: `analyze_image`
+    now accepts an optional `crop_lane` callable (`(signal, lane,
+    bottom_bound) -> (profile, top_bound, centerline)`), defaulting to
+    `_default_crop_lane` (today's exact straight-rectangle behavior — every
+    existing caller unaffected, all 51 pre-existing tests pass unchanged).
+    A new `_analyze_signal` holds the real control flow (parametrized by
+    `crop_lane`), letting an adapter that already has `signal` loaded (e.g.
+    to trace a curve) skip loading/decoding the image a second time. This
+    was a deliberate deviation from the original plan's literal wording
+    (which described adapters as calling each prototype's own standalone
+    entry point without touching `analyze_image`) — `viterbi_lanes.py` has
+    no such standalone wrapper (only lower-level trace/extract functions,
+    unlike `ridge_lanes.py`/`shared_row_lanes.py`, which do and should call
+    those directly in later phases), so duplicating `analyze_image`'s
+    ~100-line control flow per adapter was rejected as a maintenance smell
+    in favor of this one pluggable seam.
+  - **New `Centerline` type** (`analysis.py`): `rows`/`xs` arrays +
+    `x_at_row(row)` via `np.interp` — the one shape every alternative
+    method's adapter normalizes its own native curve representation into
+    (a full-image-row array, a crop-relative-row array, a raw scattered-point
+    path, ...), so `debug_viz.py` never needs to import any prototype
+    module. `LaneDebugInfo` gained two optional fields, both `None` by
+    default: `centerline` (draws an orange curve overlay) and `annotation`
+    (short text for geometry that isn't a curve, e.g. a future per-lane row
+    shift from `shared_row_lanes`).
+  - **`debug_viz.py`**: generalizes the (separate, unmerged)
+    curve-tracing branch's own curve-drawing precedent (commit `b69c320`,
+    `LaneDebugInfo.track` + `_draw_traced_curve`) into the method-agnostic
+    `centerline`/`annotation` fields above, and adds a full-width banner
+    across the top of every debug image naming the method and its maturity
+    tier, colored per tier (`MATURITY_BANNER_COLOR`) — confidence must be
+    visible on the image itself, not just in a filename.
+  - **CLI**: `--method {rectangle,viterbi,all}` (default `rectangle`, zero
+    behavior change for today's only real usage). `--method all` runs
+    every registered method, printing one table block per method (never
+    interleaving lane numbers across methods — see the `lane_numbering_
+    caveat` field, needed once a non-`detect_lanes`-anchored method like
+    `blob_graph` is added in a later phase), one `--debug` image per method
+    (`<stem>_debug_<method>.png`), and a combined JSON (`{"methods": [...]}`,
+    each entry either a normal single-method payload or `{"method",
+    "maturity", "error"}`). Every CSV/JSON row everywhere (including
+    today's plain single-method default) now carries `method`/`maturity`
+    columns — a confirmed decision, not an assumption. Exit code is 1 only
+    if *every* method fails (Unix-style "true failure" semantics); a
+    partial success (some methods worked, one didn't) still exits 0,
+    matching the "one bad method never aborts the others" design.
+  - **Methods registered so far**: `rectangle` (`maturity=stable`, unchanged
+    behavior) and `viterbi` (`maturity=promising`, DP/Viterbi curved
+    tracing — see the lane-detection-alternatives entry above for its own
+    validation history). Re-verified end to end on real images during this
+    phase, including the project's standing hard case (`R-236_PDEV1452`):
+    still shows the same known 13-boxes-on-~9-real-lanes over-segmentation
+    (expected — this phase only reshapes per-lane profiles, doesn't touch
+    lane count), with the viterbi curve visibly tracking real drift within
+    several lanes in the rendered debug image.
+  - **Tests**: new `tests/test_purity_methods.py` (registry contents,
+    per-adapter success + rescue-path coverage for both a ladder-
+    calibration failure and a missing file, `run_all_methods` isolation)
+    plus extensions to `test_purity_cli.py` (`--method`/`--method all`,
+    including the all-methods-failed exit-code case) and
+    `test_purity_debug_viz.py` (banner rendering colored by maturity,
+    centerline/annotation rendering without error) — 69 tests passing on
+    this branch (51 pre-existing + 18 new), all matching existing
+    conventions (no pixel-perfect assertions beyond the banner's own solid
+    fill color, dimension/mode checks for rendering, stdout/exit-code/
+    Traceback-absence checks for the CLI).
+  - **Not yet done, later phases per the implementation plan**: `ridge`/
+    `snake` (Phase B); `shared_row`/`blob_graph` (Phase C — the highest-
+    friction checkpoint, since `blob_graph` doesn't anchor lane count to
+    `detect_lanes` at all, needing the `lane_numbering_caveat` plumbing
+    already built but not yet exercised); `sam` (Phase D, gated on fixing
+    its 2 confirmed bugs first, already decided separately). A Workflow
+    (parallel multi-agent) approach was explicitly considered and rejected
+    for this integration work — unlike the original 6-way exploration
+    (genuinely independent, disposable prototypes), this is one evolving,
+    tightly-coupled system where parallel agents would collide on the same
+    shared files (the registry, the CLI, debug_viz) with nothing independent
+    yet to hand them; a parallel adversarial code-review pass once all
+    phases are built, before merging to `main`, was identified as the
+    right place for that pattern instead.
 
 ## Planned Features — Not Yet Built
 
@@ -753,18 +849,16 @@ users (the project submitters, reviewers, etc.) instead live in
 assuming a piece of domain knowledge (e.g. "is this ladder the standard one")
 rather than guessing.
 
-- **Is the 3-method shortlist (rectangle default + `viterbi-lane-tracing` +
-  `sam-zeroshot`) itself confirmed, or still just a proposal?** (2026-07-16)
-  Proposed after the lane-detection-alternatives Workflow exploration
-  (Implementation Status) as the set worth exposing via a `--method` flag,
-  with rectangle as the safe default — but not yet explicitly confirmed by
-  Jacob as a final decision, only discussed alongside the hosting/warm-start
-  questions that *were* confirmed. Also unconfirmed: whether
-  `curve-tracing-lane-detection` should be considered superseded by
-  `viterbi-lane-tracing` (same idea, more principled path-finding, no
-  measurable regressions found so far) and dropped, given curve-tracing
-  itself showed no accuracy win over straight rectangles on the confirmed
-  ground-truth set.
+- ~~Is the 3-method shortlist... confirmed, or still just a proposal?~~
+  **RESOLVED 2026-07-16**: Jacob decided to develop **all 6** prototypes
+  from the Workflow exploration (not just the 3-method shortlist), with
+  `sam-zeroshot` specifically deferred until its 2 confirmed bugs are
+  fixed — see the "Multi-method lane detection, Phase A shipped" entry in
+  Implementation Status for the resulting architecture and rollout.
+  `curve-tracing-lane-detection` is implicitly superseded by
+  `viterbi-lane-tracing` (not formally decided, but nothing in this phase
+  carries it forward) — still worth an explicit call if that branch is
+  ever revisited, since it has its own real, if superseded, history.
 
 ## Data Inventory
 

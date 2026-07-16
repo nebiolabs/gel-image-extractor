@@ -142,6 +142,104 @@ def test_cli_analyze_errors_cleanly_on_missing_image(tmp_path, capsys):
     assert "Traceback" not in captured.err
 
 
+def test_cli_analyze_method_flag_selects_viterbi(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+
+    exit_code = main(
+        ["purity", "analyze", str(path), "--target-mw", "25", "--ladder-bands", ladder_bands_arg, "--method", "viterbi"]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Method: viterbi (promising)" in captured.out
+
+
+def test_cli_analyze_invalid_method_rejected(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+
+    # argparse's own `choices=` validation exits the process directly
+    # (SystemExit(2)) before any pipeline code runs -- different from the
+    # application-level `return 2` used for e.g. the --csv/--json-both-to-
+    # stdout case above.
+    try:
+        main(
+            [
+                "purity", "analyze", str(path),
+                "--target-mw", "25", "--ladder-bands", ladder_bands_arg,
+                "--method", "not-a-method",
+            ]
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("expected argparse to reject an unregistered --method value")
+
+
+def test_cli_analyze_method_all_reports_every_method(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+
+    exit_code = main(
+        ["purity", "analyze", str(path), "--target-mw", "25", "--ladder-bands", ladder_bands_arg, "--method", "all"]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "=== method: rectangle (stable) ===" in captured.out
+    assert "=== method: viterbi (promising) ===" in captured.out
+
+
+def test_cli_analyze_method_all_json_has_one_entry_per_method(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+
+    exit_code = main(
+        [
+            "purity", "analyze", str(path),
+            "--target-mw", "25", "--ladder-bands", ladder_bands_arg,
+            "--method", "all", "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    methods = {m["method"] for m in payload["methods"]}
+    assert methods == {"rectangle", "viterbi"}
+    for entry in payload["methods"]:
+        assert entry["results"][0]["confidence"] == "mw-matched"
+
+
+def test_cli_analyze_method_all_writes_one_debug_image_per_method(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+    debug_path = tmp_path / "out_debug.png"
+
+    exit_code = main(
+        [
+            "purity", "analyze", str(path),
+            "--target-mw", "25", "--ladder-bands", ladder_bands_arg,
+            "--method", "all", "--debug", str(debug_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert (tmp_path / "out_debug_rectangle.png").exists()
+    assert (tmp_path / "out_debug_viterbi.png").exists()
+
+
+def test_cli_analyze_method_all_exits_nonzero_when_every_method_fails(tmp_path, capsys):
+    missing_path = tmp_path / "does_not_exist.tif"
+
+    exit_code = main(["purity", "analyze", str(missing_path), "--target-mw", "25", "--method", "all"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "FAILED" in captured.out
+
+
 def test_cli_analyze_errors_cleanly_on_unwritable_debug_path(tmp_path, synthetic_gel, capsys):
     path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
     ladder_bands_arg = ",".join(str(v) for v in known_mws)

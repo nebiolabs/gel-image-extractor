@@ -60,6 +60,27 @@ class LaneResult:
 
 
 @dataclass(frozen=True)
+class Centerline:
+    """A per-row x-position curve, for drawing an alternative method's traced
+    lane path in `--debug` output (see `purity.debug_viz`).
+
+    Every alternative lane-geometry method (`purity.methods`) shapes its own
+    native curve representation (a full-image-row array, a crop-relative-row
+    array, a raw scattered-point path, an `x_at_row`-method object, ...) into
+    this one common type -- keeping `debug_viz` free of any dependency on the
+    methods themselves. `rows`/`xs` need not cover every row (e.g. a method
+    might only trace within one lane's own vertical crop); `x_at_row`
+    interpolates for anything in between.
+    """
+
+    rows: np.ndarray
+    xs: np.ndarray
+
+    def x_at_row(self, row: float) -> float:
+        return float(np.interp(row, self.rows, self.xs))
+
+
+@dataclass(frozen=True)
 class LaneDebugInfo:
     """Raw per-lane detection detail, for the `--debug` visualization output.
 
@@ -77,6 +98,10 @@ class LaneDebugInfo:
     is_ladder: bool
     bands: list[Band]
     target_bands: list[Band]  # subset of `bands` counted as the target/matched signal
+    # Alternative-method geometry, both optional and both None for the
+    # default straight-rectangle method (nothing to add to the plain box):
+    centerline: "Centerline | None" = None  # a traced curve, drawn as an overlay line
+    annotation: str | None = None  # short text for geometry that isn't a curve (e.g. a per-lane row shift)
 
 
 @dataclass(frozen=True)
@@ -91,6 +116,17 @@ class LadderNotCalibratedError(RuntimeError):
     """Raised when the ladder can't be calibrated and --allow-heuristic wasn't given."""
 
 
+def _default_crop_lane(signal: np.ndarray, lane: Lane, bottom_bound: int) -> tuple[np.ndarray, int, "Centerline | None"]:
+    """The straight-rectangle geometry: column-range crop, summed to a profile.
+
+    This is the default `crop_lane` -- see `analyze_image`'s `crop_lane`
+    parameter. Returns `(profile, top_bound, centerline)`; `centerline` is
+    always `None` here since a straight rectangle has no curve to draw.
+    """
+    cropped, top_bound = _adaptive_crop(signal, lane, bottom_bound)
+    return cropped.sum(axis=1), top_bound, None
+
+
 def analyze_image(
     path: Path | str,
     target_mw: float,
@@ -100,6 +136,7 @@ def analyze_image(
     lane_index: int | None = None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
+    crop_lane=None,
 ) -> tuple[list[LaneResult], int, AnalysisDebugInfo]:
     """Run the full purity pipeline on a gel image.
 
@@ -109,12 +146,54 @@ def analyze_image(
     and `--lane` flags. `debug_info` carries the raw lane/band detections
     behind the results, for the `--debug` visualization output -- see
     `purity.debug_viz`.
+
+    `crop_lane` is the one pluggable seam an alternative lane-geometry
+    method (see `purity.methods`) needs: a callable
+    `(signal, lane, bottom_bound) -> (profile, top_bound, centerline)`,
+    defaulting to `_default_crop_lane` (today's straight-rectangle
+    behavior, unchanged). Everything else in this function -- ladder
+    calibration, MW-matching, low_signal flagging, debug-info assembly --
+    is already geometry-agnostic and shared by every method, straight or
+    curved, so there's exactly one control-flow copy to maintain.
     """
     image = load_image(path)
     signal = to_signal(image)
+    return _analyze_signal(
+        signal,
+        path,
+        target_mw,
+        ladder=ladder,
+        ladder_bands=ladder_bands,
+        ladder_lane_index=ladder_lane_index,
+        lane_index=lane_index,
+        tolerance_percent=tolerance_percent,
+        allow_heuristic=allow_heuristic,
+        crop_lane=crop_lane,
+    )
+
+
+def _analyze_signal(
+    signal: np.ndarray,
+    path_for_errors,
+    target_mw: float,
+    ladder: str | None = None,
+    ladder_bands: list[float] | None = None,
+    ladder_lane_index: int | None = None,
+    lane_index: int | None = None,
+    tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
+    allow_heuristic: bool = False,
+    crop_lane=None,
+) -> tuple[list[LaneResult], int, AnalysisDebugInfo]:
+    """Same pipeline as `analyze_image`, but starting from an already-loaded
+    `signal` array rather than a path -- lets a `purity.methods` adapter that
+    already needs `signal` for its own geometry computation (e.g. tracing a
+    curve) avoid loading/decoding the image a second time. `path_for_errors`
+    is only used to format error messages the same way `analyze_image` does.
+    """
+    crop_lane = crop_lane or _default_crop_lane
     lanes = detect_lanes(signal)
     if not lanes:
-        raise ValueError(f"No lanes detected in {path!r}")
+        raise ValueError(f"No lanes detected in {path_for_errors!r}")
 
     ladder_idx = ladder_lane_index if ladder_lane_index is not None else 0
     if not (0 <= ladder_idx < len(lanes)):
@@ -132,8 +211,7 @@ def analyze_image(
     bottom_bound = detect_bottom_edge_artifact_start(signal[:, all_lanes_mask])
 
     ladder_lane = lanes[ladder_idx]
-    ladder_cropped, ladder_top_bound = _adaptive_crop(signal, ladder_lane, bottom_bound)
-    ladder_profile = ladder_cropped.sum(axis=1)
+    ladder_profile, ladder_top_bound, ladder_centerline = crop_lane(signal, ladder_lane, bottom_bound)
 
     calibration: LadderCalibration | None = None
     if known_mws is not None:
@@ -162,7 +240,7 @@ def analyze_image(
     lane_total_areas: list[float] = []
     lane_debug_info: list[LaneDebugInfo] = []
     for idx, lane in selected:
-        cropped, top_bound = _adaptive_crop(signal, lane, bottom_bound)
+        profile, top_bound, centerline = crop_lane(signal, lane, bottom_bound)
         # Each lane's band positions are relative to *its own* adaptive
         # top_bound, but `calibration` was fit against the ladder lane's own
         # top_bound -- if the two differ (comb depth varies lane to lane,
@@ -173,7 +251,7 @@ def analyze_image(
         # theoretical -- see AGENTS.md Implementation Status, 2026-07-14).
         position_offset = top_bound - ladder_top_bound
         result, bands, target_bands, total_area = _analyze_lane_detailed(
-            cropped.sum(axis=1),
+            profile,
             lane_index=idx,
             target_mw=target_mw,
             calibration=calibration,
@@ -193,6 +271,7 @@ def analyze_image(
                 is_ladder=False,
                 bands=bands,
                 target_bands=target_bands,
+                centerline=centerline,
             )
         )
 
@@ -211,6 +290,7 @@ def analyze_image(
                 is_ladder=True,
                 bands=ladder_bands_detected,
                 target_bands=[],
+                centerline=ladder_centerline,
             ),
             *lane_debug_info,
         ],
