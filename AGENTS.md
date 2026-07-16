@@ -453,6 +453,111 @@ kept here is every decision, root cause, and "don't retry X" warning.
     whole image to fix lane count/identity first, then only trace each
     already-identified lane's local curvature within a narrow window around
     its known position.
+  - **Follow-up on the curve-tracing branch (2026-07-15/16, not merged
+    here)**: `curve-tracing-lane-detection` was carried further than this
+    prototype (an anchored v2/v3 redesign, wired into the real pipeline) and
+    separately validated against the full confirmed-ground-truth set — full
+    detail lives only in that branch's own AGENTS.md, not duplicated here,
+    since it hasn't been merged. Headline finding, worth recording on `main`
+    regardless of that branch's fate: curve tracing turned out **not** to
+    measurably improve purity/MW accuracy over this branch's straight-
+    rectangle approach on any of the 15 real images with confirmed protein
+    identity — the real accuracy ceiling turned out to be lane
+    identification (which lane in a multi-lane dilution series corresponds
+    to a slide's single confirmed value), not lane-geometry curvature, on
+    that ground-truth set.
+- **Six alternative lane-detection approaches prototyped in parallel via a
+  Claude Code Workflow (2026-07-16) — no clean winner, but two directions
+  worth continuing.** Explored after the curve-tracing follow-up above
+  found no accuracy win, directly questioning whether "trace a
+  straight-then-curved rectangle" is itself the wrong frame, not just
+  under-tuned. Six genuinely different mechanisms, each built by an
+  isolated agent on its own branch off this branch (`main`), each a
+  standalone prototype module reusing the existing, working
+  `core/bands.py` / `core/baseline.py` / `core/ladder.py` /
+  `purity/analysis.py`'s `_analyze_lane_detailed` unchanged — so results
+  are attributable only to the lane-geometry/profile-extraction
+  difference, not incidental reimplementation differences. Each
+  self-validated against the same 15-image confirmed-ground-truth set
+  previously used to compare `main` against `curve-tracing-lane-detection`
+  (that detailed comparison lives only on the curve-tracing branch's own
+  AGENTS.md — see the note above — but the baseline numbers it produced
+  are quoted inline below), scored against those recorded baseline numbers.
+  - **Branches** (all rooted on `main`, unmerged, one new module each,
+    nothing else touched): `band-first-graph-lanes`
+    (`core/blob_lane_graph.py`, bottom-up contour/connected-component
+    blob-chaining, no geometry assumed at all), `viterbi-lane-tracing`
+    (`core/viterbi_lanes.py`, globally-optimal DP/Viterbi path-finding
+    through the 2D intensity image), `ridge-vesselness-lane-detection`
+    (`core/ridge_lanes.py`, Frangi/Meijering ridge filtering),
+    `snake-active-contour-lanes` (`core/snake_lanes.py`, deformable active
+    contours), `dilution-shared-row-fitting` (`core/shared_row_lanes.py`,
+    joint shared-row fitting across one dilution series),
+    `sam-lane-segmentation-prototype` (`core/sam_lanes.py`, zero-shot
+    MobileSAM segmentation, no training).
+  - **The clearest result**: on the three images already flagged (via the
+    curve-tracing follow-up) as known, unsolved MW-accuracy gaps
+    (FusionProtein's lane over-detection, CoZyCap Njord, KasI/`PDEV1718`),
+    zero-shot SAM segmentation (prompted per well) closed nearly the entire
+    gap on all three — FusionProtein -11.9%/-16.8% (main/curve) →
+    **+0.1%**; CoZyCap Njord -11.2%/-11.2% → **-0.2%**; KasI -9.7%/-5.3% →
+    **-0.8%** — purely from better within-lane profile shape, without
+    changing lane count at all (`detect_lanes` reused unchanged).
+  - **But not a clean win**: SAM broke ladder calibration outright on 2
+    images that previously worked (HpyCH4IV, `R-236_PDEV1452`), regressed
+    one previously-good image sharply (`PDEV1437`, ~0% → -16.6%), and
+    purity got worse on 4 of the 6 confirmed-purity images — including the
+    one case (`R-236_PID1502_PDEV1580`) both `main` and curve-tracing
+    already nailed (98% → 83%). Suspected cause: its lane box is
+    deliberately widened toward the neighbor midpoint, letting real
+    neighboring-lane signal dilute purity — the same class of bug the
+    curve-tracing branch's own v3 fix addressed, recurring in a new form.
+  - **Second most promising**: `viterbi-lane-tracing` (replaces a greedy
+    anchor-window walk — the mechanism curve-tracing itself used, and
+    which caused its own neighbor-bleed bug — with a globally-optimal
+    path) beat or tied both baselines on 9 of 15 images, including large
+    wins on FusionProtein (-11.9%/-16.8% → +4.1%) and KasI (-9.7%/-5.3% →
+    -1.5%), with no new failure modes — still clearly worse on 4/15, and
+    by design doesn't touch lane-count over-segmentation since it reuses
+    `detect_lanes`'s count unchanged.
+  - **The other four, weaker signal**: `band-graph` under-segments badly
+    (2-7 chains vs. 6-14 rectangle lanes) with one outright crash (TelA, 0
+    chains) — a different failure mode than the rectangle approach's
+    over-segmentation, not a win, though it independently found 2 of the
+    same 3 hard-case improvements (FusionProtein +0.7%, CoZyCap Njord
+    -2.2%). `frangi-vesselness` and `active-contours` are each mixed with
+    one standout win apiece (frangi: FusionProtein -4.0%; snakes: CoZyCap
+    Njord -4.2%) and multiple regressions elsewhere. `joint-dilution-fit`
+    (exploiting the fact that a dilution series is the same sample, so
+    bands should share a row across lanes) ran cleanly everywhere but
+    produces near-identical purity numbers to both existing baselines on
+    all 6 confirmed-purity images — it does not touch the actual open
+    problem (which lane maps to a slide's single confirmed value) at all.
+  - **Caution on purity near-hits**: a few results (frangi/snakes landing
+    at 91-100% against a confirmed 91-91.6% on the R-236 lots) come from
+    the `heuristic` fallback tier, not a verified MW match, and one is
+    explicitly flagged `low_signal` — plausibly the same
+    dilution-detectability inflation artifact already documented (see
+    Known Limitations), not a genuine improvement. Not corroborated as
+    real signal.
+  - **Not wired into the CLI or `--debug`**: each branch is a standalone
+    module plus an ad hoc comparison script (some gitignored/uncommitted
+    per-branch), not touching `purity/analysis.py` or `cli.py` — by
+    design, prototype/go-no-go scope only, matching the curve-tracing
+    branch's own v1/v2 discipline before it earned a v3 wiring-in.
+  - **Process note**: run via a single Claude Code Workflow (`pipeline()`
+    of implement-then-validate stages, `isolation: 'worktree'` per branch)
+    — 12 agents, ~1.12M subagent tokens, ~25 min wall-clock, zero agent
+    errors. Worth recording partly as a real data point on Workflow's own
+    cost/reliability for this kind of exploratory fan-out, independent of
+    the lane-detection result itself.
+  - **If resuming**: `sam-lane-segmentation-prototype` and
+    `viterbi-lane-tracing` are the two worth continuing — SAM for its
+    geometry-accuracy ceiling (needs its purity-dilution and 2 new
+    calibration regressions fixed first), Viterbi for consistency (no new
+    failure modes, but doesn't address lane-count over-segmentation). The
+    other four are single-data-point curiosities at this scope, not
+    directions to keep pushing as currently built.
 
 - **Individual names removed from all docs, tests, and git history
   (2026-07-13).** Replaced accumulated submitter/reviewer names and email
