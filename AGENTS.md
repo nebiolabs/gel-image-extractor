@@ -231,6 +231,25 @@ without cause:
     detail, not blocking for MVP. **Confirmed 2026-07-14 as a non-issue for
     now**: the user's team doesn't typically produce gels in this format —
     plain ladder + dilution series is the real-world norm.
+  - **Superseded 2026-07-17: default flipped to largest-band selection,
+    MW-matching kept as an opt-in.** Empirical testing (see Implementation
+    Status) found largest-band selection lands closer to confirmed
+    ground-truth purity than MW-matching on 2 of 4 registered
+    lane-geometry methods, a wash on the other 2. New `--band-selection
+    {largest,mw-strict}` flag (default `largest`) — `mw-strict` reproduces
+    this original 2026-07-13 decision's exact behavior, byte-for-byte,
+    unchanged. In `largest` mode the ladder is still calibrated when
+    possible, but purely to *verify* the selected band against
+    `--target-mw` and flag a mismatch (`confidence: mw-mismatch`, a new 4th
+    value alongside `mw-matched`/`heuristic`/`not-found`) — never to gate
+    selection. `--allow-heuristic` keeps its original meaning for the "zero
+    calibration info at all" case in both modes; a calibrated-but-mismatched
+    band is always reported (with the flag), regardless of
+    `--allow-heuristic`, since real information exists then, just
+    disagreeing information. Not a reversal of the reasoning above (an
+    external MW check is still valuable) — a response to real evidence that
+    MW-matching's *selection* role was net-negative on this project's real
+    images, while its *verification* role remains worth keeping.
 - **CLI usability requirement: flags must be clearly self-documented in
   `--help`.** Since end users aren't CLI-comfortable (per discussion), every
   flag needs a clear, complete description in the tool's own help output, not
@@ -283,14 +302,20 @@ without cause:
   works the same way. Both flags can be combined; using both bare (no path)
   at once is the one disallowed combination, since they'd both want stdout.
   Shared column/field set: `lane`, `purity_percent`, `confidence`
-  (`mw-matched` / `heuristic` / `not-found`), `target_mw_expected`,
+  (`mw-matched` / `heuristic` / `not-found`, plus `mw-mismatch` added
+  2026-07-17 — see Implementation Status), `target_mw_expected`,
   `matched_band_mw`, `low_signal` (added 2026-07-14, see Implementation
+  Status), `method`/`maturity` (added 2026-07-16, see Implementation
   Status).
 - **Target-band edge cases resolved (2026-07-13):**
   - **Doublets/multiple bands within MW tolerance:** sum all bands that fall
     within the tolerance window as the target signal, rather than picking
     only the single nearest band — more scientifically defensible, and
-    directly motivated by an observed real doublet.
+    directly motivated by an observed real doublet. **Superseded 2026-07-17
+    for the default `--band-selection largest` mode**: doublet-summing is
+    now `mw-strict`-only (an explicit opt-in scope decision, not an
+    oversight) — `largest` mode selects a single band regardless of MW, see
+    the "Superseded 2026-07-17" Design Decision entry above.
   - **Which detected lane is the ladder:** default to the leftmost detected
     lane (true in every example seen so far), with an override flag for the
     rare exception.
@@ -328,8 +353,13 @@ without cause:
 
 ## Implementation Status
 
-**Current state (2026-07-14): purity workflow implemented and tested, 51
-tests passing.** Package layout: `src/gel_extractor/{core,purity}/`
+**Current state (2026-07-17): purity workflow implemented and tested, 79
+tests passing.** 4 lane-geometry methods registered (`--method
+rectangle/viterbi/ridge/snake/all`, default `rectangle`) and 2 band-
+selection strategies (`--band-selection largest/mw-strict`, default
+`largest`, largest-band selection since 2026-07-17 — see this section's
+dated entries below for the full history). Package layout:
+`src/gel_extractor/{core,purity}/`
 (src-layout), entry point `gelx` (`gelx purity analyze <image> --target-mw
 KDA [...]`). Run via `uv run gelx ...`; tests via `uv run pytest`. Test suite
 composition: unit tests per `core` module (synthetic, deterministic data),
@@ -515,7 +545,7 @@ kept here is every decision, root cause, and "don't retry X" warning.
   under-tuned. Six genuinely different mechanisms, each built by an
   isolated agent on its own branch off this branch (`main`), each a
   standalone prototype module reusing the existing, working
-  `core/bands.py` / `core/baseline.py` / `core/ladder.py` /
+  `core/bands.py` (which also holds baseline correction) / `core/ladder.py` /
   `purity/analysis.py`'s `_analyze_lane_detailed` unchanged — so results
   are attributable only to the lane-geometry/profile-extraction
   difference, not incidental reimplementation differences. Each
@@ -792,8 +822,10 @@ kept here is every decision, root cause, and "don't retry X" warning.
     including the all-methods-failed exit-code case, also registry-driven
     now instead of hardcoding method names) and `test_purity_debug_viz.py`
     (banner rendering colored by maturity, centerline/annotation rendering
-    without error) — 71 tests passing on this branch (51 pre-existing + 20
-    new across both phases), all matching existing conventions (no
+    without error) — 71 tests passing on this branch at this point in Phase
+    B (51 pre-existing + 20 new across both phases; now 79, see the
+    Implementation Status header and the later Band-selection-redesign
+    entry), all matching existing conventions (no
     pixel-perfect assertions beyond the banner's own solid fill color,
     dimension/mode checks for rendering, stdout/exit-code/Traceback-absence
     checks for the CLI).
@@ -847,6 +879,57 @@ kept here is every decision, root cause, and "don't retry X" warning.
   to `--method`, since target-band identification and lane geometry are
   independent axes reused by all 4 registered methods identically), or
   left as today's fallback-only behavior — see Open Questions.
+- **Band-selection redesign shipped (2026-07-17): `--band-selection
+  {largest,mw-strict}`, default flipped to `largest`.** Acts on the
+  empirical finding directly above. `largest` (new default): the biggest
+  detected band in a lane always wins, regardless of MW — single band, no
+  doublet-summing (a deliberate v1 simplification, see below). The ladder
+  is still calibrated when possible, but purely to *verify* the selected
+  band's MW against `--target-mw`, never to gate selection — a mismatch is
+  flagged as a new 4th confidence value, `mw-mismatch` (with a real
+  `purity_percent` *and* the mismatched `matched_band_mw` populated, unlike
+  every other non-`mw-matched` tier). `mw-strict`: byte-for-byte the
+  original 2026-07-13 behavior, verified identical on real output before
+  and after the refactor, not just by code inspection. `--allow-heuristic`
+  keeps its original role for the "ladder never calibrated at all" case in
+  both modes; a calibrated-but-mismatched band is always reported
+  regardless of it, since real (if disagreeing) information exists then.
+  - **Architecture**: `_analyze_lane_detailed` (`purity/analysis.py`,
+    reused identically by all 4 registered lane-geometry methods) split
+    into two independent branches rather than interleaving a new condition
+    through the existing logic — the `mw-strict` branch is untouched
+    original code; a `_mw_within_tolerance` helper was factored out of
+    `_match_target_band` so the same tolerance math serves both selection
+    (`mw-strict`) and verification (`largest`) without semantic confusion
+    at the new call site. `band_selection` threads through the *entire*
+    existing `tolerance_percent`/`allow_heuristic` pass-through chain,
+    including the public `analyze_lane` API (easy to miss — caught in
+    design review, not by the first draft).
+  - **Real gaps caught by design review before implementation, not
+    after**: an earlier draft assumed only the `"mw-matched"`-asserting
+    tests needed auditing for the default-behavior change; actual risk was
+    broader — any existing `"not-found"` test where calibration succeeds
+    but the band is out of tolerance silently becomes `"mw-mismatch"`
+    under the new default instead. Two test sites needed
+    `band_selection="mw-strict"` added for this reason, a third
+    (`test_purity_debug_viz.py`'s not-found case) turned out to already be
+    safe for an unrelated reason — its synthetic band was being cropped
+    out entirely by the bottom-edge-artifact detection before band
+    detection ever ran, confirmed by direct inspection rather than
+    assumed.
+  - **Debug rendering**: new gold/yellow `MISMATCH_BAND_COLOR` for the
+    selected band's box; per-lane label shows both the calibrated and
+    expected MW directly (e.g. "vs 58.2kDa expected) MISMATCH") so the
+    flag is legible without relying on color alone. Confirmed via real
+    rendering, not just code review — labels get visually cramped in
+    narrow lanes now that they're longer, a pre-existing cosmetic
+    limitation of the fixed-width per-lane label box, not something this
+    change attempted to fix.
+  - **Not done in this pass, deliberate v1 scope**: `largest` mode never
+    sums a doublet (only `mw-strict` still does) — a confirmed, accepted
+    tradeoff, not a bug, revisit only if it turns out to matter on real
+    images; whether this generalizes beyond the 6 confirmed-purity images
+    is still untested on the 9 confirmed-MW-only images.
 
 ## Planned Features — Not Yet Built
 
@@ -918,11 +1001,17 @@ rather than guessing.
   `viterbi-lane-tracing` (not formally decided, but nothing in this phase
   carries it forward) — still worth an explicit call if that branch is
   ever revisited, since it has its own real, if superseded, history.
-- **Which direction(s) to pursue next — raised 2026-07-17, not yet decided.**
-  Jacob questioned whether the whole multi-method effort is solving the
-  right problem, given every geometry method lands in roughly the same
-  place against confirmed ground truth. Three candidate directions
-  discussed, not mutually exclusive:
+- ~~Which direction(s) to pursue next — not yet decided.~~ **PARTIALLY
+  RESOLVED 2026-07-17**: option 2 below chosen and shipped, with a
+  refinement beyond what was originally floated — see the "Superseded
+  2026-07-17" entry in Design Decisions and the "Band-selection redesign"
+  entry in Implementation Status for the full mechanism (largest-band
+  selection as the new default, MW-matching kept opt-in via `--band-
+  selection mw-strict`, plus a new `mw-mismatch` confidence tier that
+  wasn't part of the original 3-option framing — calibration still runs to
+  *verify* the selection and flag a disagreement, rather than dropping the
+  external check entirely). **Options 1 and 3 remain genuinely undecided**
+  — original framing preserved below for that context.
   1. **Keep tuning the 4 existing geometry methods** (Viterbi's smoothing
      constant, Ridge's unresolved smoothing tension, Snake's rigidity
      params, finishing Phases C/D). Feasible, but the historical pattern

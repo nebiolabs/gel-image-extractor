@@ -6,7 +6,7 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (51 tests, all passing).
+**Purity workflow: implemented and tested** (79 tests, all passing).
 **Activity workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
@@ -33,10 +33,12 @@ the current architecture sketch.
   recheck. This takes under a minute per image and is the single best
   safeguard this tool currently has.
 - Results are also flagged automatically where the tool itself has lower
-  confidence: `not-found` (no usable signal), `heuristic` (no MW match, best
-  guess only), and `low_signal` (likely high-dilution, purity may be
-  inflated) — treat all three as needing extra scrutiny, not just ignoring
-  them.
+  confidence: `not-found` (no usable signal at all), `mw-mismatch` (the
+  selected band's calibrated MW doesn't match `--target-mw` — only possible
+  with the default `--band-selection largest`, see below), `heuristic` (no
+  MW info available at all, best guess only), and `low_signal` (likely
+  high-dilution, purity may be inflated) — treat all four as needing extra
+  scrutiny, not just ignoring them.
 
 ```
 uv sync
@@ -50,16 +52,33 @@ uv run pytest
 no single default. Ladder calibration is deliberately lenient — it works
 from however many bands are confidently detected, empirically picking
 whichever plausible size alignment fits best, rather than requiring every
-known band to resolve or assuming a fixed direction for missing ones. Real
-MW-matching now produces consistent results across most lanes of the one
-real gel tested end to end, but there's a confirmed, structural limitation:
-at high dilution, faint contaminant bands become undetectable before the
-target band does, which inflates apparent purity. This can't be fixed
-outright (the information isn't in the image below some dilution level),
-but affected lanes are flagged `low_signal` in the output (a "Flag" column,
-or a `low_signal` field in `--csv`/`--json`) rather than reported at face
-value — see AGENTS.md's Known Limitations. Treat results as directional for
-now, not exact.
+known band to resolve or assuming a fixed direction for missing ones.
+
+**Which band counts as "the target" (`--band-selection`, decided
+2026-07-17)**: by default (`largest`), the biggest detected band in a lane
+always wins, regardless of MW — empirical testing against confirmed
+ground-truth purity found this closer to the truth than MW-based matching
+on this project's real images (see `AGENTS.md` Implementation Status). The
+ladder is still calibrated when possible, purely to verify the selected
+band against `--target-mw` and flag a mismatch (`confidence: mw-mismatch`)
+— never to gate the selection itself. The original MW-matching-first
+behavior is still available via `--band-selection mw-strict` (only a band
+within `--mw-tolerance` of `--target-mw` counts as the target at all).
+Neither mode is a solved problem: there's a confirmed, structural
+limitation regardless of mode — at high dilution, faint contaminant bands
+become undetectable before the target band does, which inflates apparent
+purity. This can't be fixed outright (the information isn't in the image
+below some dilution level), but affected lanes are flagged `low_signal` in
+the output (a "Flag" column, or a `low_signal` field in `--csv`/`--json`)
+rather than reported at face value — see AGENTS.md's Known Limitations.
+Treat results as directional for now, not exact.
+
+Also see `--method` (which lane-*geometry* algorithm to use — straight
+rectangle by default [stable]; `viterbi` [promising]; `ridge`/`snake`
+[experimental] — see `AGENTS.md` Implementation Status for what each one
+actually is and its own caveats) — independent of `--band-selection`,
+which only decides target-band identity within whatever profile the chosen
+geometry produces. `gelx purity analyze --help` documents both in full.
 
 ## What this project does (planned)
 
@@ -124,15 +143,18 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 51 tests, all passing.
+  currently has 79 tests, all passing.
 - **Reporting precision:** `purity_percent` rounds to the nearest whole
   percent (not 1 decimal) — deliberately, given the pipeline's known
   real-world imprecision.
 - **`--debug [PATH]` writes an annotated debug image** showing detected lane
-  boxes, band boxes (green = target/matched, red = other/contaminant), and
-  per-lane purity/MW labels — built for both pipeline debugging and helping
-  an end user see how a result was reached. **Always check this before
-  trusting a number** — see the MVP scope note above.
+  boxes, band boxes (green = target/matched, gold = selected band's MW
+  doesn't match `--target-mw` — `mw-mismatch`, only possible with the
+  default `--band-selection largest`, red = other/contaminant), a per-
+  method/maturity banner across the top, and per-lane purity/MW labels —
+  built for both pipeline debugging and helping an end user see how a
+  result was reached. **Always check this before trusting a number** — see
+  the MVP scope note above.
 - **Lane vertical bounds (comb fringe, bottom cassette artifact) are
   adaptive**; horizontal lane *fragmentation* has a validated partial fix.
   Gel smiling/curvature and bleed-over between wide/diffuse bands remain
