@@ -1,12 +1,17 @@
 %% program-flow.mmd
 %% NOTE: Reflects the purity workflow as actually implemented and tested
-%% (src/gel_extractor/, 51 tests passing) plus the activity workflow's
+%% (src/gel_extractor/, 79 tests passing) plus the activity workflow's
 %% still-conceptual design (see AGENTS.md "Design Decisions" and
 %% "Implementation Status"). Not a full class/sequence diagram -- still a
 %% data-flow sketch, just one grounded in working code on the purity side.
+%% Lane-geometry method internals (rectangle/viterbi/ridge/snake) are
+%% deliberately not drawn per-method here -- all 4 share the exact same
+%% band-selection/purity-calc logic below via _analyze_lane_detailed, only
+%% differing in how "Auto-detect lanes" produces its per-lane profile;
+%% see AGENTS.md Implementation Status for that per-method detail.
 
 flowchart TD
-    Note["✅ Purity: implemented & tested (51 tests)<br/>⚠ Activity: conceptual only, not built<br/>see AGENTS.md Implementation Status<br/>+ Known Limitations"]
+    Note["✅ Purity: implemented & tested (79 tests)<br/>⚠ Activity: conceptual only, not built<br/>see AGENTS.md Implementation Status<br/>+ Known Limitations"]
 
     Input["Gel image input<br/>(TIFF / PNG / JPG)"]
 
@@ -18,9 +23,12 @@ flowchart TD
 
     PurityLabel["purity workflow<br/>implemented (gelx purity analyze)"]
     subgraph PurityWF[" "]
-        AutoLane["Auto-detect lanes<br/>(column intensity projection,<br/>baseline-corrected -- real gel<br/>photos aren't on white background)"]
+        AutoLane["Auto-detect lanes, trace per-lane profile<br/>(--method: rectangle [default, stable] /<br/>viterbi [promising] / ridge / snake<br/>[experimental] -- 4 registered geometry<br/>methods, this step differs per method;<br/>everything below is shared, geometry-agnostic)"]
         AdaptiveCrop["Adaptive vertical crop per lane<br/>(exclude comb/well fringe -- per-lane,<br/>row std-dev based; exclude shared<br/>bottom cassette/tape-edge artifact --<br/>whole-image, IQR-spread based)"]
-        LadderCal{"Ladder calibrated?<br/>(best-effort: searches all plausible<br/>size alignments for detected bands,<br/>keeps best fit -- min 3 bands + R²≥0.85)"}
+        BandSelection{"--band-selection?<br/>(default: largest, decided 2026-07-17 --<br/>empirically closer to confirmed ground<br/>truth than mw-strict on real images)"}
+
+        %% "mw-strict" branch -- the original 2026-07-13 behavior, unchanged
+        LadderCal{"mw-strict:<br/>Ladder calibrated?<br/>(best-effort: searches all plausible<br/>size alignments for detected bands,<br/>keeps best fit -- min 3 bands + R²≥0.85)"}
         AnyBands{"Any bands detected<br/>in this lane at all?"}
         AnyBandsUncal{"Any bands detected<br/>in this lane at all?<br/>(no calibration to match against)"}
         MWMatch["Find band(s) nearest<br/>expected MW<br/>(±20% tolerance, placeholder default;<br/>positions re-expressed in the ladder<br/>lane's own coordinate frame first)"]
@@ -29,12 +37,23 @@ flowchart TD
         Heuristic["--allow-heuristic:<br/>fallback to largest band<br/>(flagged low-confidence)"]
         ErrorOut["Error: cannot calibrate ladder --<br/>requires --ladder-bands or<br/>--allow-heuristic"]
         PurityCalc["purity % =<br/>target band area / total lane area"]
-        LaneResult["LaneResult data model<br/>(lane, purity_percent, confidence,<br/>target_mw_expected, matched_band_mw,<br/>low_signal)"]
+
+        %% "largest" branch -- the default since 2026-07-17
+        AnyBandsLargest{"largest (default):<br/>Any bands detected<br/>in this lane at all?"}
+        LadderCalLargest{"Ladder calibrated?<br/>(only used to VERIFY the already-<br/>selected band below, never to gate<br/>selection or purity_percent)"}
+        VerifyMW{"Selected (largest) band's<br/>calibrated MW within<br/>tolerance of --target-mw?"}
+        MwMatchedLargest["confidence = mw-matched<br/>purity % = largest band / total lane area"]
+        MwMismatch["confidence = mw-mismatch<br/>purity % = largest band / total lane area<br/>(flagged for review, NEVER gated --<br/>a real number is always reported here)"]
+        HeuristicGateLargest{"--allow-heuristic?<br/>(same gate as mw-strict's own<br/>uncalibrated case, unchanged)"}
+        HeuristicLargest["confidence = heuristic<br/>purity % = largest band / total lane area<br/>(no MW info available to verify at all)"]
+        NotFoundLargest["confidence = not-found<br/>(purity_percent = null)"]
+
+        LaneResult["LaneResult data model<br/>(lane, purity_percent, confidence<br/>[mw-matched/mw-mismatch/heuristic/<br/>not-found], target_mw_expected,<br/>matched_band_mw, low_signal)"]
         LowSignalFlag["Cross-lane comparison (whole image):<br/>flag lanes whose total detected signal<br/>is under 20% of the most-concentrated<br/>lane -- low_signal = true (placeholder<br/>threshold; likely high-dilution lane,<br/>purity % may be inflated)"]
         TableOut["Table (default, stdout)"]
         CsvOut["--csv [PATH]"]
         JsonOut["--json [PATH]"]
-        DebugOut["--debug [PATH]<br/>annotated lane/band image"]
+        DebugOut["--debug [PATH]<br/>annotated lane/band image --<br/>gold band box + on-image banner<br/>for mw-mismatch/method+maturity"]
     end
 
     ActivityLabel["activity workflow<br/>Not started -- rule-based planned, not ML"]
@@ -53,7 +72,9 @@ flowchart TD
     BandDet --> GridDet
     PurityLabel -.-> AutoLane
     ActivityLabel -.-> GridDet
-    AutoLane --> AdaptiveCrop --> LadderCal
+    AutoLane --> AdaptiveCrop --> BandSelection
+
+    BandSelection -- mw-strict --> LadderCal
     LadderCal -- yes --> AnyBands
     AnyBands -- no --> NotFound
     AnyBands -- yes --> MWMatch --> MatchFound
@@ -65,6 +86,17 @@ flowchart TD
     AnyBandsUncal -- yes --> Heuristic
     LadderCal -- "no, no flag given" --> ErrorOut
     PurityCalc --> LaneResult
+
+    BandSelection -- "largest (default)" --> AnyBandsLargest
+    AnyBandsLargest -- no --> NotFoundLargest --> LaneResult
+    AnyBandsLargest -- "yes (select largest band)" --> LadderCalLargest
+    LadderCalLargest -- yes --> VerifyMW
+    VerifyMW -- yes --> MwMatchedLargest --> LaneResult
+    VerifyMW -- no --> MwMismatch --> LaneResult
+    LadderCalLargest -- no --> HeuristicGateLargest
+    HeuristicGateLargest -- yes --> HeuristicLargest --> LaneResult
+    HeuristicGateLargest -- no --> NotFoundLargest
+
     LaneResult --> LowSignalFlag
     LowSignalFlag --> TableOut
     LowSignalFlag --> CsvOut
