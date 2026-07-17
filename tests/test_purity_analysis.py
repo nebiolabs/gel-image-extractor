@@ -39,10 +39,16 @@ def test_analyze_lane_mw_matched():
 
 
 def test_analyze_lane_not_found_without_heuristic():
+    # "mw-strict" specifically: under the default "largest" band_selection,
+    # a calibrated-but-out-of-tolerance band reports "mw-mismatch" (with a
+    # real purity_percent), not "not-found" -- see
+    # test_analyze_lane_largest_mode_flags_mismatch below for that case.
     calibration = _flat_calibration()
     profile = _profile_with_bands(300, [(250, 5.0)])  # no band near target mw
 
-    result = analyze_lane(profile, lane_index=1, target_mw=50.0, calibration=calibration, allow_heuristic=False)
+    result = analyze_lane(
+        profile, lane_index=1, target_mw=50.0, calibration=calibration, allow_heuristic=False, band_selection="mw-strict"
+    )
 
     assert result.confidence == "not-found"
     assert result.purity_percent is None
@@ -79,6 +85,11 @@ def test_analyze_lane_no_bands_detected_is_not_found_even_with_heuristic():
 
 
 def test_analyze_lane_sums_doublet_within_tolerance():
+    # Doublet-summing (multiple bands within tolerance counted together) is
+    # "mw-strict"-only behavior -- the default "largest" mode selects a
+    # single band regardless of MW, by design (2026-07-17 decision, see
+    # AGENTS.md), so this doublet's two near-equal bands would NOT both
+    # count without band_selection="mw-strict" here.
     calibration = _flat_calibration()
     target_mw = 50.0
     target_pos = _position_for_mw(calibration, target_mw)
@@ -86,10 +97,85 @@ def test_analyze_lane_sums_doublet_within_tolerance():
     # an out-of-tolerance contaminant.
     profile = _profile_with_bands(300, [(target_pos - 5, 4.0), (target_pos + 5, 4.0), (250, 2.0)])
 
-    result = analyze_lane(profile, lane_index=1, target_mw=target_mw, calibration=calibration, tolerance_percent=17.5)
+    result = analyze_lane(
+        profile, lane_index=1, target_mw=target_mw, calibration=calibration, tolerance_percent=17.5,
+        band_selection="mw-strict",
+    )
 
     assert result.confidence == "mw-matched"
     assert result.purity_percent > 50  # both doublet bands counted as target
+
+
+def test_analyze_lane_largest_mode_flags_mismatch():
+    # Same scenario as test_analyze_lane_not_found_without_heuristic (a
+    # calibrated ladder, but the lane's only band sits far from target_mw)
+    # -- under the default "largest" band_selection, this is a real result
+    # (largest band selected regardless of MW) flagged as a mismatch, not a
+    # refusal.
+    calibration = _flat_calibration()
+    profile = _profile_with_bands(300, [(250, 5.0)])
+
+    result = analyze_lane(profile, lane_index=1, target_mw=50.0, calibration=calibration, allow_heuristic=False)
+
+    assert result.confidence == "mw-mismatch"
+    assert result.purity_percent is not None
+    assert result.matched_band_mw is not None
+    assert result.target_mw_expected == 50.0
+
+
+def test_analyze_lane_largest_mode_matches_when_biggest_band_is_correct():
+    # When the biggest band IS also the MW-correct one, "largest" and
+    # "mw-strict" must agree exactly -- a regression-safety check that the
+    # redesign didn't change behavior on the case both modes were always
+    # meant to handle the same way.
+    calibration = _flat_calibration()
+    target_mw = 50.0
+    target_pos = _position_for_mw(calibration, target_mw)
+    profile = _profile_with_bands(300, [(target_pos, 5.0), (250, 2.0)])
+
+    largest = analyze_lane(profile, lane_index=1, target_mw=target_mw, calibration=calibration, tolerance_percent=17.5)
+    mw_strict = analyze_lane(
+        profile, lane_index=1, target_mw=target_mw, calibration=calibration, tolerance_percent=17.5,
+        band_selection="mw-strict",
+    )
+
+    assert largest.confidence == mw_strict.confidence == "mw-matched"
+    assert largest.purity_percent == mw_strict.purity_percent
+    assert largest.matched_band_mw == mw_strict.matched_band_mw
+
+
+def test_analyze_lane_largest_mode_no_calibration_without_heuristic_is_not_found():
+    profile = _profile_with_bands(300, [(50, 5.0)])
+
+    result = analyze_lane(profile, lane_index=1, target_mw=50.0, calibration=None, allow_heuristic=False)
+
+    assert result.confidence == "not-found"
+    assert result.purity_percent is None
+
+
+def test_analyze_lane_largest_mode_no_calibration_with_heuristic_is_heuristic():
+    profile = _profile_with_bands(300, [(50, 5.0), (150, 2.0)])
+
+    result = analyze_lane(profile, lane_index=1, target_mw=50.0, calibration=None, allow_heuristic=True)
+
+    assert result.confidence == "heuristic"
+    assert result.purity_percent is not None
+    assert result.matched_band_mw is None
+
+
+def test_analyze_lane_largest_mode_mismatch_ignores_allow_heuristic():
+    # The one genuinely new interaction: once calibration succeeds, a
+    # mismatch is reported identically regardless of --allow-heuristic,
+    # since real (if disagreeing) information exists -- unlike the
+    # zero-calibration case above, which IS gated by it.
+    calibration = _flat_calibration()
+    profile = _profile_with_bands(300, [(250, 5.0)])
+
+    not_allowed = analyze_lane(profile, lane_index=1, target_mw=50.0, calibration=calibration, allow_heuristic=False)
+    allowed = analyze_lane(profile, lane_index=1, target_mw=50.0, calibration=calibration, allow_heuristic=True)
+
+    assert not_allowed.confidence == allowed.confidence == "mw-mismatch"
+    assert not_allowed.purity_percent == allowed.purity_percent
 
 
 def test_analyze_image_raises_without_ladder_info(tmp_path, synthetic_gel):

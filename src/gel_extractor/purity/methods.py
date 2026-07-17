@@ -36,6 +36,7 @@ from gel_extractor.core.viterbi_lanes import extract_curved_profile, trace_lanes
 from gel_extractor.purity.analysis import (
     AnalysisDebugInfo,
     Centerline,
+    DEFAULT_BAND_SELECTION,
     DEFAULT_MW_TOLERANCE_PERCENT,
     LadderNotCalibratedError,
     LaneResult,
@@ -95,6 +96,7 @@ def _run_rectangle(
     lane_index: int | None = None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
+    band_selection: str = DEFAULT_BAND_SELECTION,
 ) -> MethodOutcome:
     """Today's default, unchanged pipeline -- `analyze_image` with no
     `crop_lane` override, so straight-rectangle behavior is exactly what it
@@ -112,6 +114,7 @@ def _run_rectangle(
             lane_index=lane_index,
             tolerance_percent=tolerance_percent,
             allow_heuristic=allow_heuristic,
+            band_selection=band_selection,
         )
     except (LadderNotCalibratedError, ValueError) as exc:
         return MethodOutcome(method=info.key, maturity=info.maturity, error=str(exc))
@@ -131,6 +134,7 @@ def _run_viterbi(
     lane_index: int | None = None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
+    band_selection: str = DEFAULT_BAND_SELECTION,
 ) -> MethodOutcome:
     """Globally-optimal (DP/Viterbi) curved lane tracing -- see
     `core.viterbi_lanes` for the algorithm itself. Reuses `detect_lanes`'s
@@ -165,6 +169,7 @@ def _run_viterbi(
             lane_index=lane_index,
             tolerance_percent=tolerance_percent,
             allow_heuristic=allow_heuristic,
+            band_selection=band_selection,
             crop_lane=crop_lane,
         )
     except (LadderNotCalibratedError, ValueError) as exc:
@@ -185,6 +190,7 @@ def _run_ridge(
     lane_index: int | None = None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
+    band_selection: str = DEFAULT_BAND_SELECTION,
 ) -> MethodOutcome:
     """Ridge/vesselness-filter (`skimage.filters.meijering`) curved lane
     tracing -- see `core.ridge_lanes` for the algorithm. Its own
@@ -232,6 +238,7 @@ def _run_ridge(
             lane_index=lane_index,
             tolerance_percent=tolerance_percent,
             allow_heuristic=allow_heuristic,
+            band_selection=band_selection,
             crop_lane=crop_lane,
         )
     except (LadderNotCalibratedError, ValueError) as exc:
@@ -252,6 +259,7 @@ def _run_snake(
     lane_index: int | None = None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
+    band_selection: str = DEFAULT_BAND_SELECTION,
 ) -> MethodOutcome:
     """Deformable active-contour ("snake") lane tracing -- see
     `core.snake_lanes`. Unlike the other per-lane methods, a single lane's
@@ -291,6 +299,7 @@ def _run_snake(
             lane_index=lane_index,
             tolerance_percent=tolerance_percent,
             allow_heuristic=allow_heuristic,
+            band_selection=band_selection,
             crop_lane=crop_lane,
         )
     except (LadderNotCalibratedError, ValueError) as exc:

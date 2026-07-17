@@ -20,6 +20,7 @@ CROP_BOUND_COLOR = (180, 0, 220)
 LABEL_TEXT_COLOR = (255, 255, 255)
 LABEL_BG_COLOR = (0, 0, 0)
 CENTERLINE_COLOR = (255, 140, 0)  # traced curve overlay, any alternative geometry method
+MISMATCH_BAND_COLOR = (230, 190, 0)  # selected band's calibrated MW doesn't match --target-mw
 
 # One background color per maturity tier -- see `purity.methods.MethodInfo` --
 # so the on-image method banner is a confidence signal at a glance, not just
@@ -62,9 +63,12 @@ def render_debug_image(
     image.
 
     Color key: blue = ladder lane, amber = sample lane, magenta = adaptive
-    crop boundary, green = band counted as the target/matched signal, red =
-    other/contaminant band, orange = a traced curve overlay (only present
-    for methods whose geometry is a curve, not a straight rectangle -- see
+    crop boundary, green = band counted as the target/matched signal,
+    gold/yellow = the selected band's calibrated MW doesn't match
+    --target-mw ("mw-mismatch" -- only possible with the default
+    --band-selection largest, see `purity.analysis`), red = other/
+    contaminant band, orange = a traced curve overlay (only present for
+    methods whose geometry is a curve, not a straight rectangle -- see
     `LaneDebugInfo.centerline`). A sample lane with no matched band
     ("not-found") shows all its bands in red. `method`/`maturity`, when
     given, draw a banner across the top of the image -- every method's
@@ -93,14 +97,16 @@ def render_debug_image(
         )
         _draw_centerline(draw, lane_info.centerline, lane_info.top_bound, lane_info.bottom_bound)
 
+        result = results_by_lane.get(lane_info.lane)
         target_band_ids = {id(b) for b in lane_info.target_bands}
+        target_color = MISMATCH_BAND_COLOR if result is not None and result.confidence == "mw-mismatch" else TARGET_BAND_COLOR
         for band in lane_info.bands:
-            band_color = TARGET_BAND_COLOR if id(band) in target_band_ids else OTHER_BAND_COLOR
+            band_color = target_color if id(band) in target_band_ids else OTHER_BAND_COLOR
             y0 = lane_info.top_bound + band.start
             y1 = lane_info.top_bound + band.end
             draw.rectangle([lane_info.x_start, y0, x1, y1], outline=band_color, width=2)
 
-        label = _lane_label(lane_info, results_by_lane)
+        label = _lane_label(lane_info, result)
         if label:
             text_y = max(0, lane_info.top_bound - 14)
             draw.rectangle([lane_info.x_start, text_y, lane_info.x_end - 1, text_y + 12], fill=LABEL_BG_COLOR)
@@ -146,10 +152,9 @@ def _draw_method_banner(draw: ImageDraw.ImageDraw, width: int, method: str | Non
     draw.text((4, 2), f"method: {text}", fill=LABEL_TEXT_COLOR)
 
 
-def _lane_label(lane_info, results_by_lane: dict[int, LaneResult]) -> str:
+def _lane_label(lane_info, result: LaneResult | None) -> str:
     if lane_info.is_ladder:
         return "ladder"
-    result = results_by_lane.get(lane_info.lane)
     if result is None:
         return ""
     if result.confidence == "not-found":
@@ -157,6 +162,10 @@ def _lane_label(lane_info, results_by_lane: dict[int, LaneResult]) -> str:
     purity = f"{result.purity_percent}%" if result.purity_percent is not None else "n/a"
     mw = f"{result.matched_band_mw:.1f}kDa" if result.matched_band_mw is not None else "n/a"
     flag = " low-sig" if result.low_signal else ""
+    if result.confidence == "mw-mismatch":
+        # Show both MWs directly in the label -- the mismatch must be
+        # legible on its own, not just implied by the band's gold outline.
+        return f"L{lane_info.lane}: {purity} ({mw} vs {result.target_mw_expected:g}kDa expected) MISMATCH{flag}"
     return f"L{lane_info.lane}: {purity} ({mw}){flag}"
 
 

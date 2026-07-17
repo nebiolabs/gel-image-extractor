@@ -28,6 +28,22 @@ from gel_extractor.core.lanes import Lane, detect_bottom_edge_artifact_start, de
 # dominant one. Still coarse; expect further tuning with more real images.
 DEFAULT_MW_TOLERANCE_PERCENT = 20.0
 
+# Which band counts as "the target" in a lane -- see AGENTS.md Implementation
+# Status (2026-07-17 empirical test) and Open Questions for the full history.
+# "largest" (the default): the biggest detected band always wins, regardless
+# of MW -- empirically closer to confirmed ground-truth purity on this
+# project's real images than MW-based selection, on 2 of 4 registered
+# methods, a wash on the other 2. Ladder calibration still runs when
+# possible, purely to VERIFY the selected band's MW against --target-mw and
+# flag a mismatch (confidence="mw-mismatch") -- it never gates selection in
+# this mode. "mw-strict" (the original, still-available behavior): only a
+# band within --mw-tolerance of --target-mw counts as the target at all;
+# falls back to "largest" only when --allow-heuristic is passed and no band
+# matches. Kept as an explicit opt-in, not deleted, since it's the only
+# mode with an a-priori external check on band identity.
+DEFAULT_BAND_SELECTION = "largest"
+BAND_SELECTIONS = ("largest", "mw-strict")
+
 # Placeholder -- see AGENTS.md Known Limitations ("dilution-detectability
 # limit," confirmed real by the user 2026-07-14): at high dilution, faint
 # contaminant bands drop below the detection floor before the target band
@@ -47,7 +63,7 @@ class LaneResult:
 
     lane: int
     purity_percent: int | None
-    confidence: str  # "mw-matched" | "heuristic" | "not-found"
+    confidence: str  # "mw-matched" | "mw-mismatch" | "heuristic" | "not-found"
     target_mw_expected: float
     matched_band_mw: float | None
     # True when this lane's total detected signal is faint relative to the
@@ -136,6 +152,7 @@ def analyze_image(
     lane_index: int | None = None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
+    band_selection: str = DEFAULT_BAND_SELECTION,
     crop_lane=None,
 ) -> tuple[list[LaneResult], int, AnalysisDebugInfo]:
     """Run the full purity pipeline on a gel image.
@@ -147,12 +164,14 @@ def analyze_image(
     behind the results, for the `--debug` visualization output -- see
     `purity.debug_viz`.
 
-    `crop_lane` is the one pluggable seam an alternative lane-geometry
-    method (see `purity.methods`) needs: a callable
+    `band_selection` (`"largest"` default, or `"mw-strict"`) decides which
+    band counts as the target -- see the constant's own comment above for
+    the full rationale. `crop_lane` is the one pluggable seam an alternative
+    lane-geometry method (see `purity.methods`) needs: a callable
     `(signal, lane, bottom_bound) -> (profile, top_bound, centerline)`,
     defaulting to `_default_crop_lane` (today's straight-rectangle
     behavior, unchanged). Everything else in this function -- ladder
-    calibration, MW-matching, low_signal flagging, debug-info assembly --
+    calibration, band selection, low_signal flagging, debug-info assembly --
     is already geometry-agnostic and shared by every method, straight or
     curved, so there's exactly one control-flow copy to maintain.
     """
@@ -168,6 +187,7 @@ def analyze_image(
         lane_index=lane_index,
         tolerance_percent=tolerance_percent,
         allow_heuristic=allow_heuristic,
+        band_selection=band_selection,
         crop_lane=crop_lane,
     )
 
@@ -182,6 +202,7 @@ def _analyze_signal(
     lane_index: int | None = None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
+    band_selection: str = DEFAULT_BAND_SELECTION,
     crop_lane=None,
 ) -> tuple[list[LaneResult], int, AnalysisDebugInfo]:
     """Same pipeline as `analyze_image`, but starting from an already-loaded
@@ -190,6 +211,8 @@ def _analyze_signal(
     curve) avoid loading/decoding the image a second time. `path_for_errors`
     is only used to format error messages the same way `analyze_image` does.
     """
+    if band_selection not in BAND_SELECTIONS:
+        raise ValueError(f"Unknown band_selection {band_selection!r} -- expected one of {BAND_SELECTIONS}")
     crop_lane = crop_lane or _default_crop_lane
     lanes = detect_lanes(signal)
     if not lanes:
@@ -258,6 +281,7 @@ def _analyze_signal(
             tolerance_percent=tolerance_percent,
             allow_heuristic=allow_heuristic,
             position_offset=position_offset,
+            band_selection=band_selection,
         )
         results.append(result)
         lane_total_areas.append(total_area)
@@ -324,14 +348,13 @@ def analyze_lane(
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
     position_offset: float = 0.0,
+    band_selection: str = DEFAULT_BAND_SELECTION,
 ) -> LaneResult:
     """Compute a purity result for one sample lane's intensity profile.
 
-    Tries MW-based target identification first (if `calibration` is given).
-    If that fails to find a matching band -- or no calibration is available
-    at all -- falls back to a largest-band heuristic only when
-    `allow_heuristic` is set; otherwise reports "not-found" rather than
-    silently guessing. `position_offset` re-expresses this lane's band
+    `band_selection` (`"largest"` default, or `"mw-strict"`) decides which
+    band counts as the target -- see `DEFAULT_BAND_SELECTION`'s comment for
+    the full rationale. `position_offset` re-expresses this lane's band
     positions in the ladder lane's own coordinate frame before calibrating
     -- see `analyze_image` for why that matters; 0.0 (the default) assumes
     both lanes share a frame, true whenever they were cropped identically.
@@ -344,6 +367,7 @@ def analyze_lane(
         tolerance_percent=tolerance_percent,
         allow_heuristic=allow_heuristic,
         position_offset=position_offset,
+        band_selection=band_selection,
     )
     return result
 
@@ -356,6 +380,7 @@ def _analyze_lane_detailed(
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
     position_offset: float = 0.0,
+    band_selection: str = DEFAULT_BAND_SELECTION,
 ) -> tuple[LaneResult, list[Band], list[Band], float]:
     """Same as `analyze_lane`, but also returns the raw bands, the subset
     counted as the target, and this lane's total detected band area --
@@ -364,7 +389,19 @@ def _analyze_lane_detailed(
     `low_signal` comparison (see `LaneResult`). `analyze_lane` stays the
     stable public entry point returning just the result; this is where the
     actual work happens.
+
+    Two independent branches below, deliberately not interleaved: `"mw-strict"`
+    is byte-for-byte the original selection logic (a band only counts as
+    target if its calibrated MW is within tolerance; falls back to the
+    largest band only when `allow_heuristic` and nothing matched). `"largest"`
+    (the default) always selects the largest band regardless of MW, and uses
+    calibration -- when available -- only to VERIFY that selection and flag
+    a mismatch, never to gate it. See `DEFAULT_BAND_SELECTION`'s module-level
+    comment and AGENTS.md's 2026-07-17 entries for why.
     """
+    if band_selection not in BAND_SELECTIONS:
+        raise ValueError(f"Unknown band_selection {band_selection!r} -- expected one of {BAND_SELECTIONS}")
+
     corrected = correct_baseline(lane_profile)
     bands = detect_bands(corrected)
     total_area = sum(b.area for b in bands)
@@ -389,24 +426,86 @@ def _analyze_lane_detailed(
             total_area,
         )
 
-    if calibration is not None:
-        matched_bands, matched_mw = _match_target_band(bands, calibration, target_mw, tolerance_percent, position_offset)
-        if matched_bands:
-            target_area = sum(b.area for b in matched_bands)
+    if band_selection == "mw-strict":
+        if calibration is not None:
+            matched_bands, matched_mw = _match_target_band(
+                bands, calibration, target_mw, tolerance_percent, position_offset
+            )
+            if matched_bands:
+                target_area = sum(b.area for b in matched_bands)
+                return (
+                    LaneResult(
+                        lane=lane_index,
+                        purity_percent=_safe_percent(target_area, total_area),
+                        confidence="mw-matched",
+                        target_mw_expected=target_mw,
+                        matched_band_mw=matched_mw,
+                    ),
+                    bands,
+                    matched_bands,
+                    total_area,
+                )
+
+        if not allow_heuristic:
             return (
                 LaneResult(
                     lane=lane_index,
-                    purity_percent=_safe_percent(target_area, total_area),
-                    confidence="mw-matched",
+                    purity_percent=None,
+                    confidence="not-found",
                     target_mw_expected=target_mw,
-                    matched_band_mw=matched_mw,
+                    matched_band_mw=None,
                 ),
                 bands,
-                matched_bands,
+                [],
                 total_area,
             )
 
+        target_bands = _largest_band(bands)
+        target_area = sum(b.area for b in target_bands)
+        return (
+            LaneResult(
+                lane=lane_index,
+                purity_percent=_safe_percent(target_area, total_area),
+                confidence="heuristic",
+                target_mw_expected=target_mw,
+                matched_band_mw=None,
+            ),
+            bands,
+            target_bands,
+            total_area,
+        )
+
+    # band_selection == "largest" (the default): the largest band always
+    # wins regardless of MW. Calibration, when available, only verifies that
+    # choice against target_mw and flags a mismatch -- it never gates
+    # selection or `purity_percent`, which is why the empirical accuracy
+    # numbers already measured for this mode (see AGENTS.md, 2026-07-17)
+    # hold regardless of whether the ladder happens to calibrate.
+    target_bands = _largest_band(bands)
+    target_area = sum(b.area for b in target_bands)
+    purity_percent = _safe_percent(target_area, total_area)
+
+    if calibration is not None:
+        matched_mw = calibration.mw_at(target_bands[0].center + position_offset)
+        confidence = "mw-matched" if _mw_within_tolerance(matched_mw, target_mw, tolerance_percent) else "mw-mismatch"
+        return (
+            LaneResult(
+                lane=lane_index,
+                purity_percent=purity_percent,
+                confidence=confidence,
+                target_mw_expected=target_mw,
+                matched_band_mw=matched_mw,
+            ),
+            bands,
+            target_bands,
+            total_area,
+        )
+
     if not allow_heuristic:
+        # No calibration at all -- e.g. the ladder never calibrated -- and
+        # the caller hasn't opted into an unverifiable guess. Same gate
+        # "mw-strict" uses in its own uncalibrated case; largest-band
+        # selection doesn't change how conservative this refusal is.
         return (
             LaneResult(
                 lane=lane_index,
@@ -420,12 +519,10 @@ def _analyze_lane_detailed(
             total_area,
         )
 
-    target_bands = _largest_band(bands)
-    target_area = sum(b.area for b in target_bands)
     return (
         LaneResult(
             lane=lane_index,
-            purity_percent=_safe_percent(target_area, total_area),
+            purity_percent=purity_percent,
             confidence="heuristic",
             target_mw_expected=target_mw,
             matched_band_mw=None,
@@ -452,6 +549,20 @@ def _adaptive_crop(signal: np.ndarray, lane: Lane, bottom_bound: int) -> tuple[n
     return lane_columns[top_bound:bottom_bound, :], top_bound
 
 
+def _mw_within_tolerance(mw: float, target_mw: float, tolerance_percent: float) -> bool:
+    """Is `mw` within `tolerance_percent` of `target_mw`?
+
+    Shared by `_match_target_band` (a selection filter, in "mw-strict" mode)
+    and `_analyze_lane_detailed`'s "largest" branch (a post-hoc verification
+    check on an already-selected band) -- same math, two different jobs, so
+    factored out rather than duplicated or called through
+    `_match_target_band` itself (whose name/docstring signal multi-band
+    selection, which the verification call site is not).
+    """
+    tolerance = target_mw * (tolerance_percent / 100.0)
+    return abs(mw - target_mw) <= tolerance
+
+
 def _match_target_band(
     bands: list[Band],
     calibration: LadderCalibration,
@@ -464,9 +575,8 @@ def _match_target_band(
     `position_offset` re-expresses each band's position in the ladder
     lane's own coordinate frame first -- see `analyze_image`.
     """
-    tolerance = target_mw * (tolerance_percent / 100.0)
     matches = [(band, calibration.mw_at(band.center + position_offset)) for band in bands]
-    matches = [(band, mw) for band, mw in matches if abs(mw - target_mw) <= tolerance]
+    matches = [(band, mw) for band, mw in matches if _mw_within_tolerance(mw, target_mw, tolerance_percent)]
     if not matches:
         return [], None
     closest_mw = min((mw for _, mw in matches), key=lambda mw: abs(mw - target_mw))

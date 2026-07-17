@@ -143,6 +143,47 @@ def test_cli_analyze_errors_cleanly_on_missing_image(tmp_path, capsys):
     assert "Traceback" not in captured.err
 
 
+def test_cli_analyze_band_selection_mw_strict_reproduces_mw_matched(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+
+    exit_code = main(
+        [
+            "purity", "analyze", str(path),
+            "--target-mw", "25", "--ladder-bands", ladder_bands_arg,
+            "--band-selection", "mw-strict",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "mw-matched" in captured.out
+
+
+def test_cli_analyze_default_band_selection_flags_mismatch(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+
+    exit_code = main(
+        [
+            "purity", "analyze", str(path),
+            # An absurd target_mw guarantees the real biggest band can't be
+            # within tolerance -- default band-selection (largest) selects
+            # it anyway and flags the mismatch rather than refusing.
+            "--target-mw", "999", "--ladder-bands", ladder_bands_arg,
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    result = payload["results"][0]
+    assert result["confidence"] == "mw-mismatch"
+    assert result["purity_percent"] is not None
+    assert result["matched_band_mw"] is not None
+
+
 def test_cli_analyze_method_flag_selects_viterbi(tmp_path, synthetic_gel, capsys):
     path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
     ladder_bands_arg = ",".join(str(v) for v in known_mws)

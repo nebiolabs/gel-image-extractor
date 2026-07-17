@@ -4,7 +4,7 @@ import numpy as np
 from skimage.io import imsave
 
 from gel_extractor.purity.analysis import Centerline, analyze_image
-from gel_extractor.purity.debug_viz import MATURITY_BANNER_COLOR, render_debug_image
+from gel_extractor.purity.debug_viz import MATURITY_BANNER_COLOR, MISMATCH_BAND_COLOR, render_debug_image
 
 
 def _write_synthetic_gel_with_contaminant(tmp_path, synthetic_gel):
@@ -117,6 +117,30 @@ def test_render_debug_image_without_method_draws_no_banner(tmp_path, synthetic_g
     # no banner fill; the top-right corner pixel stays whatever the
     # underlying image/lane-box rendering produced, never a maturity color.
     assert tuple(pixels[8, canvas.width - 5]) not in MATURITY_BANNER_COLOR.values()
+
+
+def test_render_debug_image_draws_mismatch_band_in_gold_with_labeled_mws(tmp_path, synthetic_gel):
+    path, raw_image = _write_synthetic_gel_with_contaminant(tmp_path, synthetic_gel)
+    # An absurd target_mw guarantees the (real, calibrated) biggest band
+    # can't possibly fall within tolerance of it -- default "largest" mode
+    # selects it anyway and flags the mismatch, rather than refusing.
+    results, ladder_lane_index, debug_info = analyze_image(
+        str(path), target_mw=999.0, ladder_bands=[100.0, 50.0, 25.0, 12.5, 6.25], tolerance_percent=17.5
+    )
+
+    assert results[0].confidence == "mw-mismatch"
+    assert results[0].matched_band_mw is not None
+
+    canvas = render_debug_image(raw_image, results, debug_info)
+    pixels = np.array(canvas)
+
+    sample_lane_debug = next(lane for lane in debug_info.lanes if not lane.is_ladder)
+    target_band = sample_lane_debug.target_bands[0]
+    top_offset = sample_lane_debug.top_bound
+    mid_x = (sample_lane_debug.x_start + sample_lane_debug.x_end) // 2
+
+    target_row_pixel = tuple(pixels[top_offset + target_band.start, mid_x])
+    assert target_row_pixel == MISMATCH_BAND_COLOR
 
 
 def test_render_debug_image_draws_centerline_without_error(tmp_path, synthetic_gel):

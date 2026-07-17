@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from gel_extractor.core.image_io import load_image
-from gel_extractor.purity.analysis import DEFAULT_MW_TOLERANCE_PERCENT
+from gel_extractor.purity.analysis import BAND_SELECTIONS, DEFAULT_BAND_SELECTION, DEFAULT_MW_TOLERANCE_PERCENT
 from gel_extractor.purity.debug_viz import save_debug_image
 from gel_extractor.purity.methods import METHOD_REGISTRY, run_all_methods, run_method
 from gel_extractor.purity.output import format_csv, format_table, to_payload, write_output
@@ -72,25 +72,48 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
         help="Only analyze this 1-based sample lane (default: analyze all sample lanes).",
     )
     analyze_parser.add_argument(
+        "--band-selection",
+        default=DEFAULT_BAND_SELECTION,
+        choices=BAND_SELECTIONS,
+        help=(
+            f"Which band counts as the target (default: {DEFAULT_BAND_SELECTION}). "
+            "'largest': the biggest detected band always wins, regardless of MW -- "
+            "empirically closer to confirmed ground-truth purity than MW-matching on "
+            "this project's real images (see AGENTS.md). The ladder is still "
+            "calibrated when possible, purely to VERIFY the selected band against "
+            "--target-mw and flag a mismatch ('mw-mismatch') -- it never gates "
+            "selection in this mode. 'mw-strict': the original behavior -- only a "
+            "band within --mw-tolerance of --target-mw counts as the target at all, "
+            "falling back to the largest band only with --allow-heuristic."
+        ),
+    )
+    analyze_parser.add_argument(
         "--mw-tolerance",
         type=float,
         default=DEFAULT_MW_TOLERANCE_PERCENT,
         metavar="PERCENT",
         help=(
-            f"How close (as %% of target MW) a detected band must be to count as "
-            f"the target (default: {DEFAULT_MW_TOLERANCE_PERCENT}%%). Placeholder "
-            "value -- expected to be tuned as more real gels are tested."
+            f"How close (as %% of target MW) counts as a match (default: "
+            f"{DEFAULT_MW_TOLERANCE_PERCENT}%%). Meaning depends on --band-selection: "
+            "with 'mw-strict' it's the selection filter (a band outside this range "
+            "never counts as the target); with 'largest' it's only the threshold for "
+            "flagging the already-selected band as 'mw-mismatch'. Placeholder value -- "
+            "expected to be tuned as more real gels are tested."
         ),
     )
     analyze_parser.add_argument(
         "--allow-heuristic",
         action="store_true",
         help=(
-            "If the ladder can't be calibrated, or no band matches --target-mw "
-            "within tolerance, fall back to treating the single largest band as "
-            "the target instead of refusing to produce a result. Results from "
-            "this fallback are marked 'heuristic' (lower-confidence) in the "
-            "output, never presented as equivalent to an MW-matched result."
+            "If the ladder can't be calibrated at all (zero MW info available), fall "
+            "back to reporting the largest band's purity anyway instead of refusing "
+            "to produce a result. With --band-selection mw-strict, also applies when "
+            "no band matches --target-mw within tolerance. Results from this fallback "
+            "are marked 'heuristic' (lower-confidence) in the output, never presented "
+            "as equivalent to an MW-verified result. Does NOT gate the 'largest' "
+            "mode's mismatch flagging -- a calibrated-but-mismatched band is always "
+            "reported (with the flag) regardless of this setting, since real "
+            "information exists then, just disagreeing information."
         ),
     )
     analyze_parser.add_argument(
@@ -140,13 +163,15 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
         help=(
             "Also write an annotated debug image showing detected lane and "
             "band boxes (blue = ladder lane, amber = sample lane, green = "
-            "band counted as the target/matched signal, red = other/"
-            "contaminant band, orange = a traced curve overlay for methods "
-            "whose geometry isn't a straight rectangle). A colored banner "
-            "across the top always names the method and its maturity tier. "
-            "With no PATH, writes next to the input image as "
-            "'<input-stem>_debug.png'; with --method all, one image per "
-            "method instead, as '<input-stem>_debug_<method>.png'."
+            "band counted as the target/matched signal, gold/yellow = the "
+            "selected band's calibrated MW doesn't match --target-mw "
+            "('mw-mismatch', only possible with the default --band-selection "
+            "largest), red = other/contaminant band, orange = a traced curve "
+            "overlay for methods whose geometry isn't a straight rectangle). "
+            "A colored banner across the top always names the method and "
+            "its maturity tier. With no PATH, writes next to the input "
+            "image as '<input-stem>_debug.png'; with --method all, one "
+            "image per method instead, as '<input-stem>_debug_<method>.png'."
         ),
     )
     analyze_parser.set_defaults(func=_run_analyze)
@@ -165,6 +190,7 @@ def _run_analyze(args: argparse.Namespace) -> int:
         lane_index=args.lane,
         tolerance_percent=args.mw_tolerance,
         allow_heuristic=args.allow_heuristic,
+        band_selection=args.band_selection,
     )
 
     try:
