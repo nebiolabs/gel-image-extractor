@@ -148,6 +148,19 @@ outside domain knowledge or a business/scope call.
   deferred until after the lane over-segmentation fix in case that's a
   contributing factor, but flagging now in case a domain expert already
   knows the answer.
+- [ ] **Would a human-in-the-loop annotation step (clicking to mark which
+  band is the target in a lane) be an acceptable tradeoff, or does purity
+  scoring need to stay fully automatic?** Raised 2026-07-17, prompted by the
+  repeated finding that every automatic approach tried so far (rectangle,
+  curve-tracing, and 4 further geometry methods on `multi-method-lane-
+  detection`) lands in roughly the same place against confirmed ground
+  truth, with band/lane *identification* (not lane shape) the consistent
+  bottleneck — see `AGENTS.md` Open Questions. A manual marking step would
+  directly resolve that bottleneck, but reintroduces a manual step into a
+  tool whose original goal (per the Project Overview) was replacing manual
+  eyeballing with something fast and automatic. This is a real product/
+  workflow tradeoff for the actual end users to weigh in on, not something
+  Jacob/Claude should decide unilaterally — not yet built, no decision made.
 
 ## Activity workflow
 
@@ -171,10 +184,14 @@ outside domain knowledge or a business/scope call.
 
 ---
 
-*Last updated: 2026-07-14 (ladder-standardization, low-contrast-scan-cause,
-embedded-standards, and dilution-detectability-handling questions all
-answered/decided; P7717 and N0550 ladder band lists obtained; 2 of the 4
-unlabeled images identified; R-217/R-218 relationship confirmed; new
-question added on the R-236 lots' MW-migration discrepancy. See `AGENTS.md`
-"Known Limitations" for open engineering items that don't need end-user
-input). See `AGENTS.md` for full design context behind these questions.*
+*Last updated: 2026-07-17 (new question added on whether a human-in-the-loop
+band-marking UI is an acceptable tradeoff, prompted by the multi-method
+lane-detection work's finding that band/lane identification, not lane
+shape, is the consistent accuracy bottleneck). Prior update 2026-07-14:
+ladder-standardization, low-contrast-scan-cause, embedded-standards, and
+dilution-detectability-handling questions all answered/decided; P7717 and
+N0550 ladder band lists obtained; 2 of the 4 unlabeled images identified;
+R-217/R-218 relationship confirmed; question added on the R-236 lots'
+MW-migration discrepancy. See `AGENTS.md` "Known Limitations" for open
+engineering items that don't need end-user input. See `AGENTS.md` for full
+design context behind these questions.*

@@ -811,6 +811,42 @@ kept here is every decision, root cause, and "don't retry X" warning.
     them; a parallel adversarial code-review pass once all phases are
     built, before merging to `main`, was identified as the right place for
     that pattern instead.
+- **Empirical test (2026-07-17): biggest-band target selection vs.
+  MW-matching, on the 6 confirmed-purity images.** Prompted by the user
+  questioning whether the whole multi-method effort is solving the right
+  problem, given every geometry method so far lands in roughly the same
+  place against confirmed ground truth (see above). Forced every lane
+  through the largest-band heuristic unconditionally (call `run_method`
+  with no `ladder`/`ladder_bands`, `allow_heuristic=True` — with no known
+  MWs, `calibration` stays `None` and `_analyze_lane_detailed` skips
+  MW-matching entirely for every lane, not just as a fallback), instead of
+  today's default (MW-match first, heuristic only when that fails), and
+  compared each method's best-matching-lane purity against the confirmed
+  value the same way as the earlier ground-truth comparisons. **Result: a
+  real, verified (not a search-space-size artifact — confirmed identical
+  candidate-lane counts between the two modes on a spot check) improvement
+  for `rectangle` (15.4pp -> 8.9pp average |purity - confirmed| across the
+  6 images) and `viterbi` (14.2pp -> 10.4pp); essentially a wash for
+  `ridge` (2.4pp -> 2.6pp) and `snake` (5.4pp -> 5.7pp), both already close
+  either way.** Mechanism, confirmed by inspecting individual lanes (e.g.
+  `R-217_PDEV1405`): MW-matching and biggest-band selection genuinely pick
+  *different* bands as "the target" in several lanes, and biggest-band
+  happens to land closer to the confirmed value on this image set —
+  plausibly related to the same real MW-migration-discrepancy phenomenon
+  already documented for the R-236 lots, since a mis-calibrated or
+  higher-than-expected migration position would cause MW-matching to grab
+  the wrong (small, low-purity) band while the true dominant band sits
+  outside the tolerance window entirely. **Caveats, not yet resolved**: n=6
+  images; "best-matching lane" is the same generous best-case proxy used
+  throughout this project's validation (see the ground-truth-comparison
+  entry above) — real accuracy under either rule could be worse than these
+  numbers suggest; whether this generalizes to the 9 confirmed-MW-only
+  images (no purity ground truth to check against, only MW) is untested.
+  **Not yet decided or built**: whether to make biggest-band selection the
+  new default, an opt-in flag (e.g. `--band-selection largest`, orthogonal
+  to `--method`, since target-band identification and lane geometry are
+  independent axes reused by all 4 registered methods identically), or
+  left as today's fallback-only behavior — see Open Questions.
 
 ## Planned Features — Not Yet Built
 
@@ -882,6 +918,45 @@ rather than guessing.
   `viterbi-lane-tracing` (not formally decided, but nothing in this phase
   carries it forward) — still worth an explicit call if that branch is
   ever revisited, since it has its own real, if superseded, history.
+- **Which direction(s) to pursue next — raised 2026-07-17, not yet decided.**
+  Jacob questioned whether the whole multi-method effort is solving the
+  right problem, given every geometry method lands in roughly the same
+  place against confirmed ground truth. Three candidate directions
+  discussed, not mutually exclusive:
+  1. **Keep tuning the 4 existing geometry methods** (Viterbi's smoothing
+     constant, Ridge's unresolved smoothing tension, Snake's rigidity
+     params, finishing Phases C/D). Feasible, but the historical pattern
+     (curve-tracing v1/v2/v3, then Viterbi/Ridge/Snake/band-graph/
+     shared-row, all landing in the same mediocre place) argues this alone
+     is unlikely to close the accuracy gap — it's polishing a part of the
+     pipeline that isn't where the error has consistently traced back to.
+  2. **Make biggest-band selection the default instead of a fallback.**
+     Cheap to test (already done, see Implementation Status's empirical
+     entry above — real improvement on 2/4 methods, wash on the other 2)
+     and cheap to build if adopted (a change to the shared band-
+     identification layer all 4 methods already reuse, e.g. an orthogonal
+     `--band-selection` flag alongside `--method`, not a new geometry
+     method). Real risk: MW-matching is checkable against an external
+     physical fact even when wrong; biggest-band has no external check at
+     all and would silently mis-identify a contaminant-dominated lane as
+     "pure."
+  3. **Interactive UI**: human marks the target band (click-drag), software
+     extrapolates the identification to the rest of that dilution series'
+     lanes. The only option that directly resolves the project's actual,
+     repeatedly-confirmed bottleneck (which band/lane is the target) rather
+     than refining a guess — but the largest lift by far: no UI exists
+     today (pure CLI), hosting is inside `ebase` (frontend stack/ownership
+     unknown), and the "extrapolate to other lanes" half is a real
+     algorithm problem in its own right — plausibly a reframing of the
+     already-built-but-lukewarm `shared_row_lanes` prototype (same premise:
+     a dilution series is one sample, so the target band should share a
+     row across lanes), anchored by a human-confirmed starting point
+     instead of a purely statistical guess, though that would need real
+     rework, not just wiring in as-is. Also reintroduces a manual step into
+     a tool whose founding goal was replacing manual eyeballing — a real
+     tension worth surfacing to end users (see `QUESTIONS_FOR_USERS.md`),
+     not resolved by engineering alone.
+  No decision made yet on which to pursue, or in what order.
 
 ## Data Inventory
 
