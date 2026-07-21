@@ -1084,16 +1084,25 @@ kept here is every decision, root cause, and "don't retry X" warning.
        example set's comb/well geometry, which apparently doesn't cover
        every real physical comb/well style in production use.
     3. **Burned-in text/number annotations interfering with lane
-       detection — genuinely new, not seen in the original ~17-image
-       set.** Several production images have concentration labels or
-       protein names burned directly into the photo pixels (not a separate
-       caption). `detect_lanes`'s column-profile approach picks up the
-       text's strokes/gaps as if they were real lane content, producing
-       implausibly narrow spurious lanes at character boundaries — on the
-       inspected example, this also coincided with the ladder failing to
-       calibrate against either known ladder. Any fix would need to detect
-       and mask burned-in text before column-profile-based lane detection
-       runs, not just adjust an existing threshold.
+       detection — corrected 2026-07-21, not actually new.** Originally
+       written up as a brand-new failure mode; a docs cleanup pass found
+       it isn't. `251017_..._FusionProtein.tif` (Data Inventory) was
+       already noted 2026-07-13 as having "dilution-fold labels burned
+       in," and that same image's lane over-detection (13 lanes found vs.
+       ~9 real ones) was root-caused only to generic "lane over-detection"
+       at the time — the mechanism was never identified. This batch's much
+       more heavily-text-covered example makes a strong case that
+       burned-in text was the previously-unexplained cause all along,
+       **retroactively resolving a real open item from 2026-07-13**, not
+       introducing a new one. Several production images have concentration
+       labels or protein names burned directly into the photo pixels (not
+       a separate caption); `detect_lanes`'s column-profile approach picks
+       up the text's strokes/gaps as if they were real lane content,
+       producing implausibly narrow spurious lanes at character
+       boundaries — on the inspected example, this also coincided with the
+       ladder failing to calibrate against either known ladder. Any fix
+       would need to detect and mask burned-in text before column-profile-
+       based lane detection runs, not just adjust an existing threshold.
     - **Scope note**: this is a structural/consistency check, not an
       accuracy check — no confirmed ground truth exists for this batch, so
       "method disagreement" tells us the methods disagree, not which one
@@ -1118,19 +1127,23 @@ Real, open items surfaced during implementation that haven't been resolved
 yet. Don't silently fix or dismiss these without discussing first — they're
 recorded here specifically so they aren't lost or re-litigated from scratch.
 
-- **Lane capture has no horizontal smiling/curvature or bleed-over
-  handling.** (The vertical top/bottom bound problem — comb/well fringe and
-  the bottom cassette/tape edge — is resolved; lane *fragmentation* got a
-  validated partial fix 2026-07-14; both see Implementation Status.) Gel
-  smiling (edge lanes migrating faster/slower than center lanes, curving
-  bands across the gel — confirmed present on a real image) and bleed-over
-  from a neighboring lane when bands are wide/diffuse remain unfixed. A
-  curve-tracing prototype was explored 2026-07-14 as a potential fix for
-  smiling specifically (branch `curve-tracing-lane-detection`) — real
-  improvement on a clean gel, did not fix the worst real over-segmentation
-  case, not adopted. See Implementation Status's dedicated entries for full
-  detail, including which approaches are confirmed dead ends, before
-  re-attempting anything here.
+- **Stale as of 2026-07-16, corrected 2026-07-21: curvature/smiling now has
+  partial handling, bleed-over still doesn't.** (The vertical top/bottom
+  bound problem — comb/well fringe and the bottom cassette/tape edge — is
+  resolved; lane *fragmentation* got a validated partial fix 2026-07-14;
+  both see Implementation Status.) This entry originally said lane capture
+  had no curvature handling at all — no longer true since `viterbi`/
+  `ridge`/`snake` (Implementation Status, "Multi-method lane detection")
+  all attempt curved tracing. What's still real: none of the 3 measurably
+  improves purity/MW accuracy over the straight-rectangle baseline on
+  confirmed ground truth (see Implementation Status's curve-tracing and
+  6-alternative-methods entries) — curvature was never the accuracy
+  bottleneck, band/lane *identification* is (reinforced at much larger
+  scale by the 2026-07-20 Formulation & Purification Discovery batch, see
+  below). Bleed-over from a neighboring lane when bands are wide/diffuse
+  remains completely unaddressed by any method tried. See Implementation
+  Status's dedicated entries for full detail, including confirmed dead
+  ends, before re-attempting anything here.
 - **Dilution-detectability threshold skews purity at high dilution —
   confirmed real, partially mitigated, not fixable outright.** As dilution
   increases, faint contaminant bands drop below the detection floor before
@@ -1149,10 +1162,15 @@ recorded here specifically so they aren't lost or re-litigated from scratch.
 - **TelA's ladder lane fails to calibrate entirely** (`7.17.24 PDEV772 Conc
   Stock.jpg`) — confirmed genuinely low-contrast/low-band-count in this
   specific scan, not a detection-parameter issue.
-- **Ground truth is still thin relative to the full example set**: 7 of the
-  ~17 real images tested have a confirmed purity % and/or MW to validate
-  against; the rest only confirm the calibration *machinery* runs, not that
-  the reported purity % is correct.
+- **Ground truth is still thin relative to the full example set — corrected
+  count 2026-07-21**: 15 of the ~17 curated real images have a confirmed MW/
+  protein identity (only 6 of those also have a confirmed purity %); the
+  rest only confirm the calibration *machinery* runs, not that the reported
+  purity % is correct. This is now a much smaller problem than the same
+  issue at the scale the 2026-07-20 Formulation & Purification Discovery
+  batch operates at: **zero of its 1,321 images have any confirmed purity/
+  MW at all** (see Implementation Status) — that batch's findings are
+  structural/consistency signals only, not accuracy validation.
 
 ## Open Questions
 
@@ -1217,7 +1235,17 @@ rather than guessing.
      a tool whose founding goal was replacing manual eyeballing — a real
      tension worth surfacing to end users (see `QUESTIONS_FOR_USERS.md`),
      not resolved by engineering alone.
-  No decision made yet on which to pursue, or in what order.
+  No decision made yet on which to pursue, or in what order. **Extended
+  2026-07-21**: Jacob asked for a full first-principles reassessment of the
+  whole problem, deliberately not assuming any prior work (including the
+  framing of these 3 options) is correct — see
+  `data/purity_solution_space_reassessment.md` (gitignored discussion doc,
+  not yet a decision) for the resulting broader discussion, which reaches a
+  similar place as option 3 above from a different angle (most real
+  densitometry tools don't fully automate identification either) plus two
+  new angles not in the original framing: whether MW/ladder is load-bearing
+  at all, and using dilution-series redundancy to *identify* the target
+  band, not just validate it after the fact.
 
 ## Data Inventory
 
