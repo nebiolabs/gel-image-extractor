@@ -1243,6 +1243,28 @@ kept here is every decision, root cause, and "don't retry X" warning.
     1 found comb-fringe-crop failure is a large, confirmed error source in
     this exact ground-truth set; per-lane edge-drag handles for precision
     nudging; multi-point centerline/curve tracing for smiling lanes.
+  - **Usability follow-ups (same day, after Jacob's first real use)**: an
+    on-page collapsible instructions panel, and every lane now shows a
+    visible number on its box (ladder = "Ladder"; sample lanes 1, 2, 3...
+    left to right, recomputed live) — replacing raw x-coordinate ranges
+    everywhere (checkboxes, ladder dropdown, results table, reference
+    readout). Also clarified: unchecking "include in series" keeps a lane
+    visible/selectable but skips it during propagation, while deleting
+    removes it entirely; exactly one band click is needed total, in one
+    reference lane, never one per lane. **Known current limitation**: no
+    way to manually override a single lane's propagated result without
+    re-marking the whole image's reference — a real gap if it turns out to
+    matter, not yet built.
+  - **Committed 2026-07-21** (`3ca7b2f` on `human-in-the-loop-band-
+    selection`) — only the tested algorithm (`core/band_propagation.py`,
+    `core/lanes.py`'s `apply_lane_corrections`) plus docs/tests, verified
+    clean of any Flask/server/networking code beforehand. The Flask
+    server/UI itself stays gitignored under `scripts/`, matching this
+    project's standing `scripts/`/`data/` convention. **Confirmed with
+    Jacob**: this local prototype is explicitly disposable, for validating
+    the interaction model only — if the human-in-the-loop direction pans
+    out from real usage, the real integration path is `ebase` (see Design
+    Decisions' hosting entry), not this Flask app.
 
 ## Planned Features — Not Yet Built
 
