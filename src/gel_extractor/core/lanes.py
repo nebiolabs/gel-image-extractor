@@ -172,6 +172,74 @@ def detect_lanes(
     return [Lane(index=i, x_start=start, x_end=end) for i, (start, end) in enumerate(runs)]
 
 
+def apply_lane_corrections(
+    lanes: list[Lane],
+    merge_groups: list[list[int]] | None = None,
+    drop: list[int] | None = None,
+) -> list[Lane]:
+    """Apply a human-authored correction to `detect_lanes`'s raw output.
+
+    Prototyped 2026-07-21 for the human-in-the-loop band-selection effort
+    (see AGENTS.md) -- addresses the project's single most common real
+    failure mode (a wide, diffuse smear fragmenting into many fake thin
+    lanes, see the Formulation & Purification Discovery batch review)
+    without requiring a whole new geometry method.
+
+    A correction is one atomic transaction against the *original* lane
+    list, not a queue of incremental merge/delete ops applied one after
+    another -- avoids any ambiguity about what "lane 3" refers to after an
+    earlier op already changed the list (downstream code never trusts
+    `Lane.index` for anything functional either, so this matches how the
+    rest of the pipeline already treats it, not a new convention).
+
+    `merge_groups` is a list of groups of *original* `Lane.index` values to
+    combine into one `Lane` (`x_start`/`x_end` become the min/max across the
+    group) -- assumes the group's members are meant to become one
+    contiguous span; doesn't itself validate they're adjacent or even
+    overlapping, since knowing that is exactly the human judgment call this
+    exists to capture. `drop` is a list of original `Lane.index` values to
+    remove entirely (e.g. a well-fringe or burned-in-text artifact
+    mistaken for a lane). Every original index must appear in at most one
+    place across both lists -- raises `ValueError` otherwise, since
+    silently resolving a double-reference would hide a real authoring
+    mistake rather than surface it. Lanes untouched by either list pass
+    through unchanged. Result is re-sorted by `x_start` and re-indexed
+    0..n-1, matching `detect_lanes`'s own left-to-right convention.
+    """
+    merge_groups = merge_groups or []
+    drop = drop or []
+
+    by_index = {lane.index: lane for lane in lanes}
+
+    seen: set[int] = set()
+    for group in merge_groups:
+        for idx in group:
+            if idx in seen:
+                raise ValueError(f"lane index {idx} appears in more than one correction")
+            seen.add(idx)
+    for idx in drop:
+        if idx in seen:
+            raise ValueError(f"lane index {idx} appears in more than one correction")
+        seen.add(idx)
+
+    unknown = seen - by_index.keys()
+    if unknown:
+        raise ValueError(f"correction references unknown lane index(es): {sorted(unknown)}")
+
+    merged_lanes = [
+        Lane(
+            index=-1,  # placeholder -- every surviving Lane is re-indexed below
+            x_start=min(by_index[idx].x_start for idx in group),
+            x_end=max(by_index[idx].x_end for idx in group),
+        )
+        for group in merge_groups
+    ]
+    untouched_lanes = [lane for lane in lanes if lane.index not in seen]
+
+    survivors = sorted(merged_lanes + untouched_lanes, key=lambda lane: lane.x_start)
+    return [Lane(index=i, x_start=lane.x_start, x_end=lane.x_end) for i, lane in enumerate(survivors)]
+
+
 def detect_comb_fringe_end(
     lane_columns: np.ndarray,
     std_multiplier: float = DEFAULT_COMB_STD_MULTIPLIER,
