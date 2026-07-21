@@ -353,7 +353,7 @@ without cause:
 
 ## Implementation Status
 
-**Current state (2026-07-17): purity workflow implemented and tested, 79
+**Current state (2026-07-20): purity workflow implemented and tested, 84
 tests passing.** 4 lane-geometry methods registered (`--method
 rectangle/viterbi/ridge/snake/all`, default `rectangle`) and 2 band-
 selection strategies (`--band-selection largest/mw-strict`, default
@@ -930,6 +930,178 @@ kept here is every decision, root cause, and "don't retry X" warning.
     tradeoff, not a bug, revisit only if it turns out to matter on real
     images; whether this generalizes beyond the 6 confirmed-purity images
     is still untested on the 9 confirmed-MW-only images.
+- **`--target-mw` made optional; new `largest-unverified` confidence tier
+  (2026-07-20).** Motivated directly by the Formulation & Purification
+  Discovery batch below: every prior entry point (`analyze_image`/
+  `_analyze_signal`/`analyze_lane`/`_analyze_lane_detailed`, and
+  `purity/methods.py`'s `run_method`/`run_all_methods`/all 4 adapters)
+  required `target_mw: float`, which breaks down for a batch spanning many
+  different proteins with no per-image expected MW available. `target_mw`
+  is now `float | None` everywhere; `None` is only valid with the default
+  `--band-selection largest` (the largest band is still selected, and its
+  real calibrated MW is still reported via `matched_band_mw` when the
+  ladder calibrates — `confidence` becomes `"largest-unverified"` instead
+  of `"mw-matched"`/`"mw-mismatch"`, since there's nothing to verify
+  against). `--band-selection mw-strict` still needs `target_mw` to select
+  a band at all — passing neither now raises `ValueError` from the library
+  API and prints a clean `error: --target-mw is required with
+  --band-selection mw-strict` (exit 2) from the CLI, rather than silently
+  producing a nonsense result. `LaneResult.target_mw_expected` is now
+  `float | None` to match. 5 new tests (`test_analyze_lane_largest_mode_
+  no_target_mw_with_calibration_is_unverified` and 4 others spanning the
+  library and CLI layers); all 79 pre-existing tests pass unchanged (84
+  total). No debug-image color change needed — `largest-unverified` renders
+  with the same green target-band color as `mw-matched`, since it's a real
+  selected band, just unverified; the per-lane label's existing fallback
+  format already omits any MW-comparison text when there's nothing to
+  compare against.
+- **Formulation & Purification Discovery batch: 1,321 real gel images
+  copied and blind-analyzed (2026-07-20)** — the first real-scale test of
+  this pipeline beyond the ~17-image curated set, using NEB's own
+  Production image store rather than the smaller example sets used so far.
+  - **Source and copy**: `/Volumes/Production/digital images/Formulation &
+    Purification Discovery` (a network mount, ~200 protein/construct
+    folders, 14,173 total `.jpg`/`.tif` files) — read-only for every
+    operation (`os.walk`/`shutil.copy2`, never a rename/delete/write against
+    the source). Per the end user's own filename-labeling-scheme note,
+    candidate purity-gel images are those whose filename **or any parent
+    folder name** (relative to the source root) contains `purity`, `PDEV`,
+    `final`, `concentrated stock`, or standalone `CS` (case-insensitive) —
+    matching on the full relative path, not just the bare filename, was a
+    deliberate correction after an initial filename-only pass silently
+    missed 64 real matches sitting in a keyword-named parent folder (e.g.
+    `.../PDEV757 Stability Testing/ADD Screens/8.1.24 ... .jpg`) whose own
+    filename didn't repeat the keyword. **1,321 files (~1.8 GB)** copied
+    into `data/formulation_purification_discovery/` (mirroring each file's
+    source-relative subfolder path), with a full source→dest manifest at
+    `data/formulation_purification_discovery_manifest.csv`. Both the copy
+    script (`scripts/copy_formulation_purification_gels.py`) and the data
+    itself live under paths that are **gitignored** (`scripts/`, `data/`) —
+    reproducing this from a fresh clone means re-running the script against
+    the mount, not `git pull`; the manifest/JSONL results described below
+    are the durable record of what this pass actually found, kept on local
+    disk only.
+  - **Known adjacent noise, not a bug**: the keyword rule also catches
+    non-purity images incidentally sitting in a matching folder (Titer,
+    Bradford, ADD-stability-screen shots) — confirmed directly, not just
+    suspected: 2 images that crashed every method turned out to be Bradford
+    assay photos (a colorimetric concentration assay, no lanes at all),
+    swept in only because "CS" appeared in the filename; `detect_lanes`
+    correctly found zero lanes and the adapter reported a clean error
+    rather than fabricating a result. **A real employee name appeared in
+    the source folder structure** (a personal-name-containing subfolder
+    under the mount) — never write that name into this file or any other
+    committed content (see Working Agreements); it's fine as-is on local
+    disk since `data/` is gitignored, but future work touching this same
+    data source should expect more instances of the same pattern.
+  - **No per-image target MW or confirmed ladder identity exists for this
+    batch** (~200 different proteins) — deliberately not pursued via a
+    per-protein MW lookup; Jacob judged that a "significant amount of
+    work"/wild-goose-chase relative to what a first blind pass actually
+    needed, so this run uses `target_mw=None` (see the entry above) and a
+    **per-image ladder guess** instead of assuming one globally: the cheap
+    `rectangle` method (~0.01s/call, negligible next to the ~2-11s/image
+    the 4-method pass costs) is tried against both `P7719` and `P7717`;
+    whichever actually calibrates (or has the higher R² if both do) is used
+    for the real pass, `None` if neither does. **Jacob separately confirmed
+    with the end user (2026-07-20) that P7719/P7717 are the *only* two
+    ladders in use here** — not just "at least 2" as the 2026-07-14
+    `QUESTIONS_FOR_USERS.md` answer had left open — so a `None` guess-result
+    is real information (neither known ladder fits this image), not a
+    symptom of guessing from an incomplete list.
+  - **Script**: `scripts/batch_analyze_formulation_purification.py` (also
+    gitignored). Runs the ladder guess then `run_all_methods` (all 4
+    methods, `allow_heuristic=True`, `band_selection="largest"`) per image,
+    writing one JSON record per image to
+    `data/formulation_purification_discovery_analysis.jsonl` (append-as-it-
+    goes, so a killed run loses nothing already written; resumable — a
+    rerun skips images already present). Per image, also computes flags:
+    `not_found`/`low_signal` per lane/method, `method_disagreement` when
+    two methods' purity % for the same lane differ by more than 25 points
+    (only meaningful because all 4 methods share `detect_lanes`'s lane
+    count/identity unchanged — true for all 4 registered methods, not yet
+    true for a future `blob_graph`-style method, see the
+    `lane_numbering_caveat` field), `lane_count_mismatch`, and
+    `method_crashed`. Full run: 1,321 images, **zero fatal errors**, ~2.5
+    hours wall-clock (dominated by `ridge`/`snake`'s per-lane filtering
+    cost on real image sizes).
+  - **Results — the real news is prevalence, not novelty of the failure
+    mode.** Ladder calibrated on 1,171/1,321 images (88.6%: 807 as P7717,
+    364 as P7719); 150 (11.4%) matched neither. **952 images (72.1%) hit a
+    genuine structural red flag** (`method_disagreement`, `not_found`,
+    `no_ladder_calibrated`, or `method_crashed` — excluding `low_signal`,
+    which is expected dilution-detectability behavior, not itself a
+    problem); only 69 (5.2%) were fully clean. **Method disagreement alone
+    hit 55.8% of images** (>25pp purity swing between methods on the same
+    lane) and **not-found hit 34.4%** (a lane with literally zero
+    detectable bands in at least one method). Broken down by which keyword
+    matched: **images with `purity` literally in the filename had the
+    *highest* structural-flag rate (80.3%)** — higher than `cs` (70.5%),
+    `final` (60.9%), or `pdev` (49.5%). This is the opposite of what a
+    "loose keyword swept in bad matches" explanation would predict, and is
+    the single most important finding of this pass: **cross-method
+    lane-geometry disagreement is pervasive on real, unambiguously-labeled
+    purity gels at scale**, not an artifact of the original ~17-image
+    curated set's hard cases. This is a much larger, better-evidenced
+    version of the open question already logged in `AGENTS.md`/
+    `QUESTIONS_FOR_USERS.md` (band/lane *identification*, not lane shape,
+    as the real accuracy ceiling) — it doesn't resolve that question, but
+    it substantially raises confidence that it's real and general.
+  - **Debug-image triage sample generated and visually reviewed (same
+    day)**: 105 of the 952 flagged images selected (`scripts/generate_
+    triage_debug_images.py`, gitignored) — top-40 most-severe from `purity`
+    (largest + worst category), top-15 each from `cs`/`final`/`pdev`, 10
+    `no_ladder_calibrated` examples, 10 clean-baseline images for contrast.
+    412 debug PNGs rendered under `data/formulation_purification_discovery_
+    debug/` (gitignored) plus an index CSV; 1 image failed on a TIFF
+    compression codec (`CCITTFAX4`, needs the optional `imagecodecs`
+    package) — a second Bradford-assay non-gel photo, same root cause as
+    the 2 method-crash cases above, not worth a new dependency to fix for
+    one non-gel image.
+  - **Visual inspection of the sample found 3 distinct root causes, 2
+    already known and 1 new** — see `data/formulation_purification_
+    discovery_review.md` (and its companion `.pptx`, both gitignored, built
+    for distribution) for the full writeup with annotated debug-image
+    examples:
+    1. **Continuous-smear fragmentation (the dominant driver)** — a wide,
+       diffuse sample smear (an overloaded/degraded sample, or several
+       near-identical fractions loaded side by side) repeatedly gets sliced
+       by `detect_lanes` into many thin fake lanes, each reporting a
+       fabricated-looking purity % read off background noise. Confirmed
+       `viterbi`'s curved tracing doesn't help here — with no real vertical
+       structure in a blank region its path runs straight and it still
+       reports noise-driven bands. This is a lane-*count* problem none of
+       the 4 registered methods can fix, since all 4 reuse `detect_lanes`'s
+       count unchanged — the existing 2026-07-14 fragmentation fix
+       (`_merge_fragmented_runs`) evidently doesn't generalize to this
+       pattern at real scale.
+    2. **Loading-well/comb-fringe leakage on non-standard well geometry**
+       (a new instance of a known problem) — on at least one real image,
+       `detect_comb_fringe_end`'s adaptive top-crop leaves dark well/
+       loading-point marks visible well inside several lane boxes rather
+       than cropping them out, confusing band detection near the top of
+       the lane. The adaptive crop was validated against the original
+       example set's comb/well geometry, which apparently doesn't cover
+       every real physical comb/well style in production use.
+    3. **Burned-in text/number annotations interfering with lane
+       detection — genuinely new, not seen in the original ~17-image
+       set.** Several production images have concentration labels or
+       protein names burned directly into the photo pixels (not a separate
+       caption). `detect_lanes`'s column-profile approach picks up the
+       text's strokes/gaps as if they were real lane content, producing
+       implausibly narrow spurious lanes at character boundaries — on the
+       inspected example, this also coincided with the ladder failing to
+       calibrate against either known ladder. Any fix would need to detect
+       and mask burned-in text before column-profile-based lane detection
+       runs, not just adjust an existing threshold.
+    - **Scope note**: this is a structural/consistency check, not an
+      accuracy check — no confirmed ground truth exists for this batch, so
+      "method disagreement" tells us the methods disagree, not which one
+      (if any) is right. **No design decisions were made from this
+      review** — it's reporting only; candidate directions (masking
+      burned-in text, a more general well-fringe detector, flagging
+      "smear vs. distinct bands" before over-segmenting) are listed in the
+      writeup but not evaluated against each other or decided on.
 
 ## Planned Features — Not Yet Built
 

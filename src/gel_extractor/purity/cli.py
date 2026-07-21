@@ -35,9 +35,16 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
     analyze_parser.add_argument(
         "--target-mw",
         type=float,
-        required=True,
+        default=None,
         metavar="KDA",
-        help="Expected molecular weight of the target protein, in kDa.",
+        help=(
+            "Expected molecular weight of the target protein, in kDa. Required "
+            "with --band-selection mw-strict (needed to select a band at all). "
+            "Optional with the default --band-selection largest -- if omitted, "
+            "the largest band is still reported with a real calibrated MW when "
+            "the ladder calibrates, just flagged 'largest-unverified' instead of "
+            "'mw-matched'/'mw-mismatch' since there's nothing to check it against."
+        ),
     )
 
     ladder_group = analyze_parser.add_mutually_exclusive_group()
@@ -180,6 +187,9 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
 def _run_analyze(args: argparse.Namespace) -> int:
     if args.csv == "-" and args.json == "-":
         print("error: --csv and --json cannot both be written to stdout at once", file=sys.stderr)
+        return 2
+    if args.target_mw is None and args.band_selection == "mw-strict":
+        print("error: --target-mw is required with --band-selection mw-strict", file=sys.stderr)
         return 2
 
     ladder_bands = [float(v) for v in args.ladder_bands.split(",")] if args.ladder_bands else None

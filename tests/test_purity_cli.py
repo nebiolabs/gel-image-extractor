@@ -184,6 +184,43 @@ def test_cli_analyze_default_band_selection_flags_mismatch(tmp_path, synthetic_g
     assert result["matched_band_mw"] is not None
 
 
+def test_cli_analyze_no_target_mw_defaults_to_largest_unverified(tmp_path, synthetic_gel, capsys):
+    # 2026-07-20: --target-mw is now optional under the default
+    # band-selection (largest) -- for batches spanning many proteins with no
+    # per-image expected MW available. A real purity%/matched-MW still comes
+    # out, just flagged unverified instead of matched/mismatched.
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+
+    exit_code = main(["purity", "analyze", str(path), "--ladder-bands", ladder_bands_arg, "--json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    result = payload["results"][0]
+    assert result["confidence"] == "largest-unverified"
+    assert result["purity_percent"] is not None
+    assert result["matched_band_mw"] is not None
+    assert result["target_mw_expected"] is None
+
+
+def test_cli_analyze_mw_strict_requires_target_mw(tmp_path, synthetic_gel, capsys):
+    path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
+    ladder_bands_arg = ",".join(str(v) for v in known_mws)
+
+    exit_code = main(
+        [
+            "purity", "analyze", str(path),
+            "--ladder-bands", ladder_bands_arg, "--band-selection", "mw-strict",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "error:" in captured.err
+    assert "--target-mw is required" in captured.err
+
+
 def test_cli_analyze_method_flag_selects_viterbi(tmp_path, synthetic_gel, capsys):
     path, known_mws = _write_synthetic_gel(tmp_path, synthetic_gel)
     ladder_bands_arg = ",".join(str(v) for v in known_mws)

@@ -6,7 +6,7 @@ standardized, reproducible pipeline.
 
 ## Status
 
-**Purity workflow: implemented and tested** (79 tests, all passing).
+**Purity workflow: implemented and tested** (84 tests, all passing).
 **Activity workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
@@ -35,10 +35,12 @@ the current architecture sketch.
 - Results are also flagged automatically where the tool itself has lower
   confidence: `not-found` (no usable signal at all), `mw-mismatch` (the
   selected band's calibrated MW doesn't match `--target-mw` — only possible
-  with the default `--band-selection largest`, see below), `heuristic` (no
-  MW info available at all, best guess only), and `low_signal` (likely
-  high-dilution, purity may be inflated) — treat all four as needing extra
-  scrutiny, not just ignoring them.
+  with the default `--band-selection largest`, see below), `largest-
+  unverified` (real calibrated MW, but no `--target-mw` was given to check
+  it against — see below), `heuristic` (no MW info available at all, best
+  guess only), and `low_signal` (likely high-dilution, purity may be
+  inflated) — treat all five as needing extra scrutiny, not just ignoring
+  them.
 
 ```
 uv sync
@@ -63,7 +65,18 @@ ladder is still calibrated when possible, purely to verify the selected
 band against `--target-mw` and flag a mismatch (`confidence: mw-mismatch`)
 — never to gate the selection itself. The original MW-matching-first
 behavior is still available via `--band-selection mw-strict` (only a band
-within `--mw-tolerance` of `--target-mw` counts as the target at all).
+within `--mw-tolerance` of `--target-mw` counts as the target at all, and
+`--target-mw` is required in this mode).
+
+**`--target-mw` is optional as of 2026-07-20** — but only with the default
+`--band-selection largest`. Omit it (e.g. when batch-analyzing many
+different proteins with no per-image expected MW on hand) and the largest
+band is still selected, with its real calibrated MW still reported when the
+ladder calibrates; `confidence` becomes `largest-unverified` instead of
+`mw-matched`/`mw-mismatch`, since there's nothing to check the calibrated
+MW against. `--band-selection mw-strict` still requires `--target-mw` (it
+needs a target to select a band at all) — omitting it there is a clean CLI
+error, not a guess.
 Neither mode is a solved problem: there's a confirmed, structural
 limitation regardless of mode — at high dilution, faint contaminant bands
 become undetectable before the target band does, which inflates apparent
@@ -143,7 +156,7 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 79 tests, all passing.
+  currently has 84 tests, all passing.
 - **Reporting precision:** `purity_percent` rounds to the nearest whole
   percent (not 1 decimal) — deliberately, given the pipeline's known
   real-world imprecision.

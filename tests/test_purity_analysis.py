@@ -178,6 +178,44 @@ def test_analyze_lane_largest_mode_mismatch_ignores_allow_heuristic():
     assert not_allowed.purity_percent == allowed.purity_percent
 
 
+def test_analyze_lane_largest_mode_no_target_mw_with_calibration_is_unverified():
+    # 2026-07-20: batches spanning many proteins with no per-image expected
+    # MW available -- the largest band is still selected and its real
+    # calibrated MW still reported, just flagged as unverified rather than
+    # compared against a target that doesn't exist.
+    calibration = _flat_calibration()
+    profile = _profile_with_bands(300, [(50, 5.0), (150, 2.0)])
+
+    result = analyze_lane(profile, lane_index=1, target_mw=None, calibration=calibration)
+
+    assert result.confidence == "largest-unverified"
+    assert result.purity_percent is not None
+    assert result.matched_band_mw is not None
+    assert result.target_mw_expected is None
+
+
+def test_analyze_lane_largest_mode_no_target_mw_no_calibration_is_heuristic():
+    # No target_mw and no calibration is the same "nothing to verify against
+    # at all" case the heuristic fallback already handles -- target_mw being
+    # absent doesn't change that path.
+    profile = _profile_with_bands(300, [(50, 5.0), (150, 2.0)])
+
+    result = analyze_lane(profile, lane_index=1, target_mw=None, calibration=None, allow_heuristic=True)
+
+    assert result.confidence == "heuristic"
+    assert result.purity_percent is not None
+
+
+def test_analyze_lane_mw_strict_requires_target_mw():
+    # "mw-strict" needs target_mw to select a band at all -- None must fail
+    # loudly, not silently produce a nonsense result.
+    calibration = _flat_calibration()
+    profile = _profile_with_bands(300, [(50, 5.0)])
+
+    with pytest.raises(ValueError, match="target_mw is required"):
+        analyze_lane(profile, lane_index=1, target_mw=None, calibration=calibration, band_selection="mw-strict")
+
+
 def test_analyze_image_raises_without_ladder_info(tmp_path, synthetic_gel):
     image = synthetic_gel(band_specs=[[(50, 0.8)], [(100, 0.5)]])
     path = tmp_path / "gel.png"

@@ -89,7 +89,7 @@ class MethodInfo:
 
 def _run_rectangle(
     path: Path | str,
-    target_mw: float,
+    target_mw: float | None,
     ladder: str | None = None,
     ladder_bands: list[float] | None = None,
     ladder_lane_index: int | None = None,
@@ -127,7 +127,7 @@ def _run_rectangle(
 
 def _run_viterbi(
     path: Path | str,
-    target_mw: float,
+    target_mw: float | None,
     ladder: str | None = None,
     ladder_bands: list[float] | None = None,
     ladder_lane_index: int | None = None,
@@ -183,7 +183,7 @@ def _run_viterbi(
 
 def _run_ridge(
     path: Path | str,
-    target_mw: float,
+    target_mw: float | None,
     ladder: str | None = None,
     ladder_bands: list[float] | None = None,
     ladder_lane_index: int | None = None,
@@ -252,7 +252,7 @@ def _run_ridge(
 
 def _run_snake(
     path: Path | str,
-    target_mw: float,
+    target_mw: float | None,
     ladder: str | None = None,
     ladder_bands: list[float] | None = None,
     ladder_lane_index: int | None = None,
@@ -365,7 +365,7 @@ METHOD_REGISTRY: dict[str, MethodInfo] = {
 }
 
 
-def run_method(key: str, path: Path | str, target_mw: float, **kwargs) -> MethodOutcome:
+def run_method(key: str, path: Path | str, target_mw: float | None, **kwargs) -> MethodOutcome:
     """Run one registered method by key. Unknown keys are a caller bug
     (typically a CLI argparse `choices=` mismatch), not a runtime data
     problem -- raises `KeyError` rather than returning a `MethodOutcome`,
@@ -376,7 +376,7 @@ def run_method(key: str, path: Path | str, target_mw: float, **kwargs) -> Method
     return METHOD_REGISTRY[key].adapter(path, target_mw, **kwargs)
 
 
-def run_all_methods(path: Path | str, target_mw: float, **kwargs) -> list[MethodOutcome]:
+def run_all_methods(path: Path | str, target_mw: float | None, **kwargs) -> list[MethodOutcome]:
     """Run every registered method against the same image, in registration
     order. Each method's own adapter already catches its documented failure
     modes -- a method that fails still returns a `MethodOutcome` (with

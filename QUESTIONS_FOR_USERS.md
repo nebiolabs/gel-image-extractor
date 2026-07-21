@@ -51,6 +51,16 @@ outside domain knowledge or a business/scope call.
     ladder, not just default to P7719 as originally floated. A second real
     ladder, **P7717**, was confirmed and seeded the same day (see below) —
     13 bands: 200, 150, 100, 85, 70, 60, 50, 40, 30, 25, 20, 15, 10 kDa.
+    **Narrowed further 2026-07-20**: Jacob confirmed with the end user that
+    P7719/P7717 are the *only* two ladders in use, closing the "at least 2"
+    open-endedness above. Empirical support at real scale: a blind batch
+    analysis of 1,321 Formulation & Purification Discovery images (see
+    `AGENTS.md` Implementation Status) guessed per-image ladder identity by
+    trying both against each image — 88.6% calibrated against one of the
+    two (807 as P7717, 364 as P7719), and the 11.4% that calibrated against
+    neither is plausibly explained by genuinely low-contrast/uncalibratable
+    scans (already a known failure mode, see TelA below) rather than a
+    missing third ladder.
   - *Activity/titer:* always **N0550** (a DNA fragment-size ladder, kb not
     kDa — distinct from the protein MW ladders above; not yet wired into
     any code since the activity/titer workflow isn't built). Not confirmed

@@ -63,8 +63,8 @@ class LaneResult:
 
     lane: int
     purity_percent: int | None
-    confidence: str  # "mw-matched" | "mw-mismatch" | "heuristic" | "not-found"
-    target_mw_expected: float
+    confidence: str  # "mw-matched" | "mw-mismatch" | "largest-unverified" | "heuristic" | "not-found"
+    target_mw_expected: float | None
     matched_band_mw: float | None
     # True when this lane's total detected signal is faint relative to the
     # most-concentrated lane in the same image -- a likely high-dilution
@@ -145,7 +145,7 @@ def _default_crop_lane(signal: np.ndarray, lane: Lane, bottom_bound: int) -> tup
 
 def analyze_image(
     path: Path | str,
-    target_mw: float,
+    target_mw: float | None,
     ladder: str | None = None,
     ladder_bands: list[float] | None = None,
     ladder_lane_index: int | None = None,
@@ -163,6 +163,15 @@ def analyze_image(
     and `--lane` flags. `debug_info` carries the raw lane/band detections
     behind the results, for the `--debug` visualization output -- see
     `purity.debug_viz`.
+
+    `target_mw` may be `None` only with `band_selection="largest"` (the
+    default) -- added 2026-07-20 for batches spanning many different
+    proteins with no per-image expected MW available. The largest band is
+    still selected and, when the ladder calibrates, its real measured MW is
+    still reported (`matched_band_mw`) -- there's just nothing to verify it
+    against, so `confidence` becomes `"largest-unverified"` instead of
+    `"mw-matched"`/`"mw-mismatch"`. `band_selection="mw-strict"` needs
+    `target_mw` to select a band at all, so `None` there raises `ValueError`.
 
     `band_selection` (`"largest"` default, or `"mw-strict"`) decides which
     band counts as the target -- see the constant's own comment above for
@@ -195,7 +204,7 @@ def analyze_image(
 def _analyze_signal(
     signal: np.ndarray,
     path_for_errors,
-    target_mw: float,
+    target_mw: float | None,
     ladder: str | None = None,
     ladder_bands: list[float] | None = None,
     ladder_lane_index: int | None = None,
@@ -343,7 +352,7 @@ def _analyze_signal(
 def analyze_lane(
     lane_profile: np.ndarray,
     lane_index: int,
-    target_mw: float,
+    target_mw: float | None,
     calibration: LadderCalibration | None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
@@ -375,7 +384,7 @@ def analyze_lane(
 def _analyze_lane_detailed(
     lane_profile: np.ndarray,
     lane_index: int,
-    target_mw: float,
+    target_mw: float | None,
     calibration: LadderCalibration | None,
     tolerance_percent: float = DEFAULT_MW_TOLERANCE_PERCENT,
     allow_heuristic: bool = False,
@@ -401,6 +410,8 @@ def _analyze_lane_detailed(
     """
     if band_selection not in BAND_SELECTIONS:
         raise ValueError(f"Unknown band_selection {band_selection!r} -- expected one of {BAND_SELECTIONS}")
+    if target_mw is None and band_selection == "mw-strict":
+        raise ValueError("target_mw is required when band_selection='mw-strict' (only 'largest' allows None)")
 
     corrected = correct_baseline(lane_profile)
     bands = detect_bands(corrected)
@@ -487,7 +498,13 @@ def _analyze_lane_detailed(
 
     if calibration is not None:
         matched_mw = calibration.mw_at(target_bands[0].center + position_offset)
-        confidence = "mw-matched" if _mw_within_tolerance(matched_mw, target_mw, tolerance_percent) else "mw-mismatch"
+        if target_mw is None:
+            # No expected MW to verify against (see analyze_image's
+            # docstring, 2026-07-20) -- report the real calibrated MW without
+            # pretending to know whether it's right.
+            confidence = "largest-unverified"
+        else:
+            confidence = "mw-matched" if _mw_within_tolerance(matched_mw, target_mw, tolerance_percent) else "mw-mismatch"
         return (
             LaneResult(
                 lane=lane_index,
