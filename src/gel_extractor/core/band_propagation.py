@@ -57,21 +57,32 @@ def find_nearest_band(
     top_bound: int,
     target_absolute_row: float,
     tolerance: float,
+    require_unambiguous: bool = True,
 ) -> Band | None:
     """Find whichever of `bands` (all from one lane, with that lane's own
     `top_bound`) best matches `target_absolute_row`, or `None` on an honest
-    miss. Serves two roles with the same logic: snapping a human's raw
-    click to the nearest actually-detected band in that same lane, and
-    matching a reference row against a *different* lane's bands during
-    propagation -- both are "which of this lane's bands is closest to a
-    target row," just with a different source for the target row.
+    miss. Serves two roles: snapping a human's raw click to the nearest
+    actually-detected band in that same lane, and matching a reference row
+    against a *different* lane's bands during propagation -- both are
+    "which of this lane's bands is closest to a target row," just with a
+    different source for the target row, and different stakes.
 
     Two ways to come back `None` rather than a forced guess, since a
     confidently-wrong pick is worse than admitting uncertainty:
     - nothing falls within `tolerance` at all, or
-    - the two nearest candidates are within half of `tolerance` of each
-      other (ambiguous -- e.g. a real contaminant band sitting almost as
-      close to the target row as the true target band itself).
+    - (only when `require_unambiguous`) the two nearest candidates are
+      within half of `tolerance` of each other (ambiguous -- e.g. a real
+      contaminant band sitting almost as close to the target row as the
+      true target band itself).
+
+    `require_unambiguous=False` is for a direct human click only (see
+    `scripts/hitl_ui_server.py`'s reference-click match): the click already
+    *is* the human's judgment, not a guess to be second-guessed, and the
+    HITL UI shows the snapped result immediately (band overlay, plus the
+    "Delete band" correction) for the human to catch and fix a bad snap --
+    protections `propagate_target_band`'s row-guess-based matching across
+    *other* lanes doesn't have, which is why its calls keep the default
+    `True` and this parameter never reaches it.
     """
     if not bands:
         return None
@@ -82,12 +93,31 @@ def find_nearest_band(
     if nearest_distance > tolerance:
         return None
 
-    if len(ranked) > 1:
+    if require_unambiguous and len(ranked) > 1:
         second_distance = abs(absolute_row(top_bound, ranked[1]) - target_absolute_row)
         if (second_distance - nearest_distance) < (tolerance / 2):
             return None
 
     return nearest
+
+
+def exclude_deleted_bands(
+    bands: list[Band],
+    top_bound: int,
+    deleted_ranges: set[tuple[int, int]],
+) -> list[Band]:
+    """`bands` minus any whose absolute (y_start, y_end) range is in
+    `deleted_ranges` -- the human-in-the-loop review UI's per-band "delete"
+    action (see `scripts/hitl_ui_server.py`). Identity is by absolute pixel
+    range rather than a separate id: those are the exact values already sent
+    to and echoed back from the client, and band detection is deterministic
+    for an unchanged lane crop, so no id scheme is needed.
+    """
+    return [
+        band
+        for band in bands
+        if (top_bound + band.start, top_bound + band.end) not in deleted_ranges
+    ]
 
 
 def propagate_target_band(
@@ -106,12 +136,21 @@ def propagate_target_band(
     lane in the image" -- real gels in this project's own data mix a
     dilution series with lanes that aren't part of it at all.
 
-    Returns a dict covering every lane in `series_lanes`; a lane with no
-    matching band (nothing within tolerance, or an ambiguous choice --
-    see `find_nearest_band`) maps to `None` rather than a forced guess.
+    Returns a dict covering every lane in `series_lanes`; a lane with
+    nothing within tolerance at all maps to `None` rather than a forced
+    guess -- a genuinely absent target. Ambiguity between two close
+    candidates does NOT hold a lane back (`require_unambiguous=False`,
+    same as the reference click -- see `find_nearest_band`'s docstring):
+    every lane's result is shown via the HITL UI's band overlay and
+    correctable with its "Delete band" action, the same safety net that
+    justified relaxing the reference click, so there's no longer a real
+    distinction between "a human clicked this" and "this was propagated"
+    for ambiguity-tolerance purposes.
     """
     result: dict[int, Band | None] = {}
     for lane_index in series_lanes:
         top_bound, bands = lanes[lane_index]
-        result[lane_index] = find_nearest_band(bands, top_bound, reference_absolute_row, tolerance)
+        result[lane_index] = find_nearest_band(
+            bands, top_bound, reference_absolute_row, tolerance, require_unambiguous=False
+        )
     return result

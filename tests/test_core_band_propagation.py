@@ -1,5 +1,6 @@
 from gel_extractor.core.band_propagation import (
     absolute_row,
+    exclude_deleted_bands,
     find_nearest_band,
     propagate_target_band,
     row_tolerance,
@@ -49,6 +50,20 @@ def test_find_nearest_band_none_when_two_candidates_are_ambiguous():
     assert result is None
 
 
+def test_find_nearest_band_snaps_to_nearest_when_ambiguity_check_disabled():
+    # Same setup as the ambiguous case above, but require_unambiguous=False
+    # (the direct-human-click path) should snap to the nearer one instead of
+    # refusing.
+    nearer = _band(center=52.0)
+    bands = [_band(center=48.0), nearer]
+
+    result = find_nearest_band(
+        bands, top_bound=0, target_absolute_row=53.0, tolerance=20.0, require_unambiguous=False
+    )
+
+    assert result is nearer
+
+
 def test_find_nearest_band_not_ambiguous_when_second_candidate_much_farther():
     bands = [_band(center=51.0), _band(center=65.0)]
 
@@ -87,6 +102,18 @@ def test_propagate_target_band_matches_across_lanes_with_different_top_bounds():
     assert result[3] is None
 
 
+def test_propagate_target_band_snaps_to_nearest_even_when_ambiguous():
+    # Series-lane propagation now matches the reference click's behavior:
+    # two close candidates in a lane no longer hold the whole lane back --
+    # the nearer one wins, same as require_unambiguous=False directly.
+    nearer = _band(center=52.0)
+    lanes = {2: (0, [_band(center=48.0), nearer])}
+
+    result = propagate_target_band(reference_absolute_row=53.0, lanes=lanes, series_lanes=[2], tolerance=20.0)
+
+    assert result[2] is nearer
+
+
 def test_propagate_target_band_ignores_lanes_outside_series():
     lanes = {
         1: (0, [_band(center=50.0)]),
@@ -96,3 +123,34 @@ def test_propagate_target_band_ignores_lanes_outside_series():
     result = propagate_target_band(reference_absolute_row=50.0, lanes=lanes, series_lanes=[1], tolerance=10.0)
 
     assert list(result.keys()) == [1]
+
+
+def test_exclude_deleted_bands_is_a_no_op_when_nothing_deleted():
+    bands = [_band(center=50.0), _band(center=200.0)]
+
+    result = exclude_deleted_bands(bands, top_bound=100, deleted_ranges=set())
+
+    assert result == bands
+
+
+def test_exclude_deleted_bands_removes_only_the_matching_range():
+    target = _band(center=50.0)
+    contaminant = _band(center=200.0)
+    bands = [target, contaminant]
+    deleted_ranges = {(100 + contaminant.start, 100 + contaminant.end)}
+
+    result = exclude_deleted_bands(bands, top_bound=100, deleted_ranges=deleted_ranges)
+
+    assert result == [target]
+
+
+def test_exclude_deleted_bands_can_remove_the_matched_band_itself():
+    # Deleting the currently-matched target band, not just a contaminant --
+    # the HITL server relies on this to fall back to "unmatched" rather than
+    # silently promoting a different candidate.
+    target = _band(center=50.0)
+    deleted_ranges = {(100 + target.start, 100 + target.end)}
+
+    result = exclude_deleted_bands([target], top_bound=100, deleted_ranges=deleted_ranges)
+
+    assert result == []

@@ -1447,6 +1447,44 @@ recorded here specifically so they aren't lost or re-litigated from scratch.
   follow-up. Worth factoring into the `ebase` hosting discussion
   ([[ebase_hosting]]) if pursued, the same way the SAM/torch dependency
   weight was.
+- **Ambiguity-gate tolerance (`DEFAULT_ROW_TOLERANCE_FRACTION`): reference
+  click now bypasses it entirely, 2026-07-22.** Jacob hit "ambiguous --
+  two candidates too close to call" repeatedly clicking reference bands via
+  the HITL tool, including a case (screenshotted) where the crosshair
+  landed squarely on the correct band but a smaller adjacent band still
+  tripped the check. Root cause, first diagnosed earlier the same day:
+  `band_propagation.find_nearest_band`'s tolerance (`row_tolerance()`, a
+  fixed 5% of a lane's resolving height by default) was controlling two
+  opposing things from one constant: (a) how far a click can be from a real
+  band and still count at all, and (b) -- via `tolerance / 2` -- how much
+  separation two candidate bands need before one wins over the other. The
+  first pass concluded the *constant itself* wasn't safely tunable without
+  a full 15-image calibration pass (shrinking/growing it just traded one
+  false-refusal mode for the other). Resolution reached here is narrower
+  and doesn't touch the constant: `find_nearest_band` gained a
+  `require_unambiguous: bool = True` parameter, and `hitl_ui_server.py`'s
+  one direct-human-click call site (matching the reference lane's own
+  click) now passes `require_unambiguous=False`, so it just snaps to the
+  nearest band within tolerance and skips the ambiguity check outright.
+  `propagate_target_band`'s per-lane series matching *also* now passes
+  `require_unambiguous=False` (same-day follow-up, once Jacob noticed
+  series lanes were still coming back blank/unmatched on the same kind of
+  close-candidate case the reference click had just been fixed for): the
+  original reasoning for treating the two call sites differently --
+  propagated lanes have "no direct visual confirmation, unlike the click
+  itself" -- doesn't actually hold, since every lane's result (reference or
+  propagated) is shown via the same band overlay and correctable with the
+  same "Delete band" action. So there's no real distinction left between
+  "a human clicked this" and "this was propagated" for ambiguity-tolerance
+  purposes, and both call sites now behave identically: snap to the
+  nearest band within tolerance, full stop. The `nearest_distance >
+  tolerance` cutoff (genuinely nothing near the expected row in that lane)
+  is unchanged and still returns `None` everywhere -- only the "two
+  candidates too close together" rejection was ever in question. **Change
+  made and shipped** (see `find_nearest_band`/`propagate_target_band` in
+  `core/band_propagation.py`); the `DEFAULT_ROW_TOLERANCE_FRACTION` value
+  itself is still unretuned pending that calibration pass, should it ever
+  be worth doing.
 
 ## Open Questions
 
