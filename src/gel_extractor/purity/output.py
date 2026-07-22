@@ -8,7 +8,6 @@ architecture").
 
 import csv
 import io
-import json
 from pathlib import Path
 
 from gel_extractor.purity.analysis import LaneResult
@@ -76,10 +75,10 @@ def format_csv(results: list[LaneResult], method: str, maturity: str) -> str:
 
 
 def to_payload(results: list[LaneResult], ladder_lane_index: int, method: str, maturity: str) -> dict:
-    """The dict a single method's JSON output serializes -- exposed
-    separately from `format_json` so `--method all` (see `purity.cli`) can
-    assemble several methods' payloads into one combined JSON document
-    without round-tripping through a JSON string first.
+    """The dict a single method's JSON output serializes -- kept separate
+    from `json.dumps` so `--method all` (see `purity.cli`) can assemble
+    several methods' payloads into one combined JSON document without
+    round-tripping through a JSON string first.
     """
     return {
         "method": method,
@@ -87,10 +86,6 @@ def to_payload(results: list[LaneResult], ladder_lane_index: int, method: str, m
         "ladder_lane": ladder_lane_index + 1,
         "results": to_records(results, method, maturity),
     }
-
-
-def format_json(results: list[LaneResult], ladder_lane_index: int, method: str, maturity: str) -> str:
-    return json.dumps(to_payload(results, ladder_lane_index, method, maturity), indent=2)
 
 
 def write_output(content: str, destination: str | None) -> None:

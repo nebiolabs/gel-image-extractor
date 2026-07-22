@@ -170,7 +170,10 @@ outside domain knowledge or a business/scope call.
   tool whose original goal (per the Project Overview) was replacing manual
   eyeballing with something fast and automatic. This is a real product/
   workflow tradeoff for the actual end users to weigh in on, not something
-  Jacob/Claude should decide unilaterally — not yet built, no decision made.
+  Jacob/Claude should decide unilaterally — a disposable local prototype now
+  exists (see `AGENTS.md` Implementation Status) to inform the answer, but
+  no decision on whether this becomes the real product direction has been
+  made.
 
 ## Activity workflow
 

@@ -1218,7 +1218,8 @@ kept here is every decision, root cause, and "don't retry X" warning.
     "boost faint signal," alongside the default global min/max stretch
     `debug_viz.py` already uses) so a lane `detect_bands` can see via local
     baseline correction isn't invisible to the human under one fixed
-    global stretch.
+    global stretch (removed 2026-07-22 as not useful in practice, replaced
+    by an "invert (negative)" preset -- see the Phase 2.1 entry below).
   - **Explicit no-match reasons, not blank cells**: a `None` propagation
     result (the median case for several lanes per image, per Phase 1)
     reports *why* — "no band within tolerance," "ambiguous -- two
@@ -1254,7 +1255,10 @@ kept here is every decision, root cause, and "don't retry X" warning.
     reference lane, never one per lane. **Known current limitation**: no
     way to manually override a single lane's propagated result without
     re-marking the whole image's reference — a real gap if it turns out to
-    matter, not yet built.
+    matter, not yet built. (Partially resolved 2026-07-22 by "Delete band,"
+    see the Phase 2.1 entry below — a lane's result can now be corrected
+    without re-marking the reference, but only by discarding a wrong band
+    to "unmatched," not by picking a specific different one.)
   - **Committed 2026-07-21** (`3ca7b2f` on `human-in-the-loop-band-
     selection`) — only the tested algorithm (`core/band_propagation.py`,
     `core/lanes.py`'s `apply_lane_corrections`) plus docs/tests, verified
@@ -1309,6 +1313,49 @@ kept here is every decision, root cause, and "don't retry X" warning.
   nested duplicate peak detections a real photographed gel doesn't (if
   built from stacked narrower gaussians) -- the real-image regression test
   is the trustworthy check here, not a synthetic one. 107/107 tests pass.
+- **HITL review UI, Phase 2.1 (2026-07-22, same day as Phase 2) --
+  delete-band correction, bulk lane clearing, contrast invert.** Three
+  small UI additions to `scripts/hitl_ui_server.py`/`scripts/hitl_ui_static/
+  review.html`, prompted by real usage surfacing gaps Phase 2 didn't cover.
+  - **Delete band** (new toolbar mode, enabled only after a successful
+    Analyze): clicking any shown band box removes it from that lane's
+    purity-percent denominator via a new tested `exclude_deleted_bands`
+    helper in `core/band_propagation.py`. If the deleted band was the one
+    selected as the target, the lane falls back to "unmatched" rather than
+    silently promoting a different candidate -- a deliberate choice, not an
+    oversight (a confidently-wrong auto-substitute defeats the point of a
+    human-verified pick). Persisted into the correction-record JSON (new
+    `deleted_bands` field) so `evaluate_human_assisted_propagation.py`'s
+    replay honors it too, once real (not mechanically-authored) records
+    carry it. Directly the fix referenced by Phase 2's "Known current
+    limitation" note above.
+  - **Delete all lanes** button: bulk version of the existing per-lane
+    Delete-lane mode, for redrawing every lane by hand rather than one at a
+    time.
+  - **Contrast "invert (negative)"** button added; the "boost faint
+    signal" percentile-clip preset from Phase 2 was removed the same day
+    at Jacob's request as not useful in practice -- contrast options are
+    now just default / invert, both applied only to the background gel
+    image so lane/band overlay colors stay legible against either.
+  - Separately, same day: `find_nearest_band`/`propagate_target_band` in
+    `core/band_propagation.py` gained a `require_unambiguous` parameter --
+    see "Ambiguity-gate tolerance" in Known Limitations for the full
+    story (real usage found the ambiguity safeguard rejecting visually
+    obvious correct matches on both the reference click and series-lane
+    propagation).
+  - Committed to git: only `core/band_propagation.py`'s
+    `exclude_deleted_bands`/`require_unambiguous` changes plus tests/docs
+    (commit `a2ae7a0`). The Flask server/UI changes themselves stay
+    gitignored under `scripts/`, same as Phase 2.
+  - Also this session: removed two pieces of genuinely dead code found
+    during a full unused-code audit -- `core/snake_lanes.py`'s
+    `SnakeTrace` dataclass (never constructed; the module's real pipeline
+    entry point returns a raw tuple instead) and `purity/output.py`'s
+    `format_json` (never called; `purity/cli.py` builds JSON output via
+    `to_payload()` + `json.dumps()` directly). Confirmed via `ridge_lanes.py`'s
+    similarly-low-usage `analyze_image_ridge` that NOT everything with few
+    callers is dead -- that one is an intentional bypassed prototype path,
+    documented as such in `_run_ridge`'s own comments, and was left alone.
 
 ## Planned Features — Not Yet Built
 
@@ -1447,8 +1494,9 @@ recorded here specifically so they aren't lost or re-litigated from scratch.
   follow-up. Worth factoring into the `ebase` hosting discussion
   ([[ebase_hosting]]) if pursued, the same way the SAM/torch dependency
   weight was.
-- **Ambiguity-gate tolerance (`DEFAULT_ROW_TOLERANCE_FRACTION`): reference
-  click now bypasses it entirely, 2026-07-22.** Jacob hit "ambiguous --
+- **Ambiguity-gate tolerance (`DEFAULT_ROW_TOLERANCE_FRACTION`): both the
+  reference click and series-lane propagation now bypass it entirely,
+  2026-07-22.** Jacob hit "ambiguous --
   two candidates too close to call" repeatedly clicking reference bands via
   the HITL tool, including a case (screenshotted) where the crosshair
   landed squarely on the correct band but a smaller adjacent band still
