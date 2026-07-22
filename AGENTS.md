@@ -1265,6 +1265,50 @@ kept here is every decision, root cause, and "don't retry X" warning.
     the interaction model only — if the human-in-the-loop direction pans
     out from real usage, the real integration path is `ebase` (see Design
     Decisions' hosting entry), not this Flask app.
+- **Fixed, 2026-07-22: cross-lane crop-artifact corroboration for
+  `band_selection="largest"`.** See Known Limitations' entry for the bug
+  itself (a broad crop-boundary leftover winning "largest" on area alone,
+  confirmed on `8.6.25 Protein Purity.tif` lanes 4-8, ~137-218 kDa instead
+  of the real ~29 kDa) -- this entry is the fix and how it was validated.
+  Two candidate fixes were tried and rejected first, calibrated against all
+  15 real ground-truth images before either was trusted: (1) exclude any
+  band whose width is a strong outlier vs. the *median* width of every
+  other band in its own lane -- too blunt at every multiplier tested (2.0
+  through 4.0): still failed to fix the target lanes at the threshold
+  needed to avoid collateral damage, and broke multiple other real images
+  along the way (worst case, `R-236_PID1502_PDEV1580_98.5pct...` dropped
+  from 98% purity, matching its confirmed 98.5%, to 2%, on 3 lanes). (2) a
+  narrower single-lane rule (exclude only a band that's simultaneously the
+  widest AND closest to the crop boundary in its own lane) improved but
+  still regressed several unrelated images and still badly damaged the
+  same confirmed 98.5%-purity case. **What actually worked**: the same
+  single-lane "widest AND closest to top" candidate from attempt (2), but
+  only acted on when the *same* candidate band (by absolute row range, ±10
+  px slack) recurs across at least half the image's sample lanes (minimum
+  3) -- i.e. corroborated across the image, not judged from one lane in
+  isolation. Calibrated result: touches only 2 of the 15 ground-truth
+  images (the one with the confirmed bug, plus one other where it only
+  ever *increases* purity% via a more accurate denominator, never changes
+  which band is selected), and leaves the other 13 -- including the
+  98.5%-confirmed case -- completely untouched. Re-verified in
+  `band_selection="mw-strict"` mode too: every `matched_band_mw` across all
+  15 images is byte-identical before/after; the fix only removes the
+  artifact's bogus area from the purity% denominator, never changes which
+  band gets MW-matched. Implementation: `_suspect_crop_artifact_band` (the
+  per-lane candidate) and `_corroborated_crop_artifact_bands` (the
+  cross-lane agreement check) in `purity/analysis.py`; `analyze_image` now
+  runs lane cropping/band-detection in two passes (corroborate first, then
+  finalize each lane) instead of one, so `_analyze_lane_detailed` (new
+  `exclude_bands` param) can drop the corroborated band from both the
+  purity% denominator and target-selection eligibility before either
+  selection branch runs -- benefiting `mw-strict`'s purity% too, not just
+  `largest`'s selection. 7 new tests (2 real-data regression + integration,
+  5 unit on the new helpers); a full synthetic multi-lane reproduction was
+  attempted and abandoned -- `make_synthetic_gel`'s simple gaussian bands
+  either get absorbed by baseline correction (if smooth/wide) or produce
+  nested duplicate peak detections a real photographed gel doesn't (if
+  built from stacked narrower gaussians) -- the real-image regression test
+  is the trustworthy check here, not a synthetic one. 107/107 tests pass.
 
 ## Planned Features — Not Yet Built
 
@@ -1274,6 +1318,16 @@ without confirming scope first (see Working Agreements).
 - **Second (class/method call-flow) mermaid diagram** — see Architecture
   Diagram section below; tracked in memory
   ([[planned_call_flow_diagram]]), not yet built.
+- **End-user-facing band-visualization debug view in `ebase`** — requested
+  2026-07-22, after Jacob used the human-in-the-loop prototype's new
+  debug toggle (target band bright green, every other detected band
+  bright magenta, filled directly on the image) and confirmed it's
+  independently valuable to end users, not just a developer debugging
+  aid. Confirmed no git action needed right now, just that the capability
+  must not be lost: `src/gel_extractor/purity/debug_viz.py` already does
+  the outline-style version of this, git-tracked, wired to `--debug` — that
+  is the durable home for the requirement when this reaches `ebase`, not
+  the disposable HITL prototype. See memory `ebase_hosting`.
 
 ## Known Limitations — Flagged for Later
 
@@ -1325,6 +1379,74 @@ recorded here specifically so they aren't lost or re-litigated from scratch.
   batch operates at: **zero of its 1,321 images have any confirmed purity/
   MW at all** (see Implementation Status) — that batch's findings are
   structural/consistency signals only, not accuracy validation.
+- **Confirmed real correctness bug, 2026-07-22: `band_selection="largest"`
+  (the default) can select a top-of-gel artifact as the target band,
+  not a real protein.** Surfaced via the HITL prototype's new debug
+  overlay on `8.6.25 Protein Purity.tif`: `detect_comb_fringe_end`
+  correctly crops past the comb teeth themselves, but a separate, broad
+  (~80-90 row), roughly uniform-intensity region immediately follows in
+  every one of the 8 sample lanes at nearly identical extent regardless
+  of dilution -- Jacob confirmed by eye he doesn't recognize it as a real
+  physical feature (unlike the bottom cassette/tape-edge shadow, which he
+  did confirm is real and physical). Running the actual automatic pipeline
+  (`target_mw=None`, `band_selection="largest"`) on this image confirms
+  the bug is live, not hypothetical: lanes 4-8 select this artifact as
+  their "largest" band and report 137-218 kDa, while a real human click on
+  lanes 1-3 (via the HITL tool) finds the true target at ~59-60 kDa. A
+  width-outlier survey across all 15 ground-truth images (first-detected-
+  band width vs. other-bands'-median-width per lane) showed this is real
+  but *not* a fixed-position pattern: in several other images (e.g.
+  `6.12.26 PDEV1718 Protein Purity.tif`) the first band after crop is
+  narrow/legitimate and it's *later* bands that are the wide outliers
+  instead -- ruling out a blanket "skip whatever's right after the comb"
+  position-based rule. **Fixed 2026-07-22 for lanes 4-7 of this image**
+  via cross-lane corroboration -- see Implementation Status's dated entry
+  for the fix, the two rejected candidate approaches, and full validation.
+  **Still open: lane 8 of this same image remains wrong** (still reports
+  217.8 kDa) -- its version of the artifact never satisfied the
+  corroboration rule's per-lane "widest AND closest to top" precondition,
+  a separate, not-yet-understood case within the same broader problem.
+  Affects every analysis using the `largest`/`largest-unverified` path --
+  which includes the entire 2026-07-20 Formulation & Purification
+  Discovery batch -- so this may partially explain that batch's 72%
+  structural-flag rate rather than being a new, separate issue; the fix's
+  effect on that batch specifically hasn't been re-measured.
+- **Confirmed real, tabled 2026-07-22: burned-in caption text can be
+  detected as a real band, not just confuse lane detection.** Surfaced
+  visually via the HITL prototype's debug overlay on two real images
+  (`8.6.25 Protein Purity.tif`, `10.31.25 PDEV1437.tif`) -- a caption like
+  "HpyCH4IV PID1284" or "R-218 TET3 / PDEV1437", burned directly into the
+  photo pixels in the lower-left corner, sits within one or more lanes'
+  column range and gets picked up by `detect_bands` as if it were real
+  signal. Distinct from (but related to) the already-documented
+  lane-*detection* instance of burned-in text above -- this is
+  band-*detection* picking up text that survives inside an otherwise
+  correctly-detected lane. **Not the same bug the cross-lane
+  corroboration fix (above) addresses** -- that fix only catches a band
+  that's simultaneously widest and closest to the *top* crop boundary in
+  its own lane; a caption low in the frame doesn't match that shape.
+  Jacob confirmed: the caption's location is inconsistent enough (it can
+  overlap the ladder lane in one image, sample lanes in another) that a
+  fixed positional mask isn't reliable on its own. Three pixel-statistic
+  heuristics were tried and rejected, calibrated against real caption
+  regions across both images before any code was written: (1) cross-lane-
+  width intensity variance (text strokes vs. smooth band) -- backwards on
+  3 of 5 lanes tested; (2) signal bleeding into the empty gaps between
+  lanes (real protein never does this) -- no clean separation, background
+  intensity drift swamps the effect; (3) 2D gradient/edge density (sharp
+  text strokes vs. smooth gaussian blob) -- inconsistent, because a
+  caption isn't uniformly "text" across its width -- a lane's column-slice
+  through it can land on a letter stroke or on blank space between
+  letters, and averaging over the lane's width washes out the difference
+  either way. **Tabled, not solved.** The real fix is believed to be
+  genuine text detection (e.g. OCR via `pytesseract`) to locate and mask
+  the actual text bounding box regardless of position, rather than
+  inferring "text-ness" from band shape/statistics -- a real scope
+  increase (new Python dependency, a new system-level `tesseract` binary,
+  a new masking step before lane/band detection runs), not a quick
+  follow-up. Worth factoring into the `ebase` hosting discussion
+  ([[ebase_hosting]]) if pursued, the same way the SAM/torch dependency
+  weight was.
 
 ## Open Questions
 

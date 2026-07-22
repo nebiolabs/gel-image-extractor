@@ -60,3 +60,26 @@ def test_dilution_series_purity_is_self_consistent():
     # is good. Expected to tighten substantially once MW-matching can be
     # validated against a verified ladder.
     assert spread < 70, f"purity %% spread across dilution lanes was {spread:.1f} points ({purities})"
+
+
+def test_largest_band_selection_excludes_corroborated_crop_artifact():
+    """Regression test for a confirmed real bug (AGENTS.md Known
+    Limitations, 2026-07-22): a broad, roughly uniform-intensity leftover
+    glued to the crop boundary, present at a consistent position across
+    most sample lanes of this exact image, used to win
+    band_selection="largest" on area alone in several lanes -- reporting an
+    obviously-wrong ~137-218 kDa instead of the real ~29 kDa target. Lanes 4
+    and 5 were the clearest confirmed cases (49%/136.9 kDa and 73%/139.0 kDa
+    before the fix). Deliberately a real-image test, not synthetic --
+    reproducing this exact baseline-correction/peak-detection interaction
+    with `make_synthetic_gel`'s simple gaussian bands proved unreliable (a
+    smooth wide artifact gets absorbed as baseline; a jagged one produces
+    nested duplicate peak detections a real photographed gel doesn't).
+    """
+    results, _, _ = analyze_image(
+        str(HPYCH4IV_IMAGE), target_mw=None, ladder="P7719", allow_heuristic=True, band_selection="largest"
+    )
+    by_lane = {r.lane: r for r in results}
+    for lane in (4, 5):
+        mw = by_lane[lane].matched_band_mw
+        assert mw is not None and mw < 100, f"lane {lane} regressed to an implausible MW: {mw}"

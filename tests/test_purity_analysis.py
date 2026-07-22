@@ -2,8 +2,16 @@ import numpy as np
 import pytest
 from skimage.io import imsave
 
+from gel_extractor.core.bands import Band
 from gel_extractor.core.ladder import LadderCalibration
-from gel_extractor.purity.analysis import LadderNotCalibratedError, analyze_image, analyze_lane
+from gel_extractor.purity.analysis import (
+    LadderNotCalibratedError,
+    _analyze_lane_detailed,
+    _corroborated_crop_artifact_bands,
+    _suspect_crop_artifact_band,
+    analyze_image,
+    analyze_lane,
+)
 
 
 def _flat_calibration() -> LadderCalibration:
@@ -305,3 +313,97 @@ def test_analyze_image_flags_faint_lane_as_low_signal(tmp_path, synthetic_gel):
     strong_result, faint_result = results
     assert strong_result.low_signal is False
     assert faint_result.low_signal is True
+
+
+# --- cross-lane crop-artifact corroboration (AGENTS.md Known Limitations,
+# 2026-07-22) -- see the module-level comment above
+# ARTIFACT_CORROBORATION_ROW_SLACK in analysis.py for the confirmed real bug
+# this exists to catch.
+
+
+def test_suspect_crop_artifact_band_needs_both_widest_and_closest_to_top():
+    widest_and_closest = Band(start=5, end=45, center=25.0, area=500.0)
+    narrower_band = Band(start=100, end=110, center=105.0, area=100.0)
+    assert _suspect_crop_artifact_band([widest_and_closest, narrower_band]) is widest_and_closest
+
+    # Widest band is NOT the one closest to top -- a real, legitimately wide
+    # band elsewhere in the lane must never be flagged just for being wide.
+    wide_but_not_first = Band(start=100, end=140, center=120.0, area=500.0)
+    closest_but_narrow = Band(start=5, end=15, center=10.0, area=100.0)
+    assert _suspect_crop_artifact_band([wide_but_not_first, closest_but_narrow]) is None
+
+
+def test_suspect_crop_artifact_band_needs_at_least_two_bands():
+    lone_band = Band(start=5, end=45, center=25.0, area=500.0)
+    assert _suspect_crop_artifact_band([lone_band]) is None
+    assert _suspect_crop_artifact_band([]) is None
+
+
+def test_corroborated_crop_artifact_bands_requires_cross_lane_agreement():
+    # Three lanes share the same suspect band at essentially the same
+    # absolute row range -- enough lanes, consistent position, corroborated.
+    artifact = lambda offset: Band(start=5 + offset, end=45 + offset, center=25.0, area=500.0)
+    real_band = lambda offset: Band(start=100 + offset, end=110 + offset, center=105.0, area=100.0)
+    lane_bands = {
+        1: (0, [artifact(0), real_band(0)]),
+        2: (0, [artifact(1), real_band(1)]),
+        3: (0, [artifact(-1), real_band(-1)]),
+        4: (0, [real_band(0), Band(start=200, end=210, center=205.0, area=50.0)]),  # no suspect at all
+    }
+
+    excluded = _corroborated_crop_artifact_bands(lane_bands)
+
+    assert set(excluded) == {1, 2, 3}
+    assert excluded[1] == artifact(0)
+
+
+def test_corroborated_crop_artifact_bands_ignores_uncorroborated_single_lane():
+    # The same suspect shape, but only ONE lane has it -- must not exclude
+    # anything (this is the exact failure mode a per-lane-only width rule
+    # doesn't protect against, confirmed to cause real regressions when
+    # calibrated against all 15 ground-truth images -- see AGENTS.md).
+    lane_bands = {
+        1: (0, [Band(start=5, end=45, center=25.0, area=500.0), Band(start=100, end=110, center=105.0, area=100.0)]),
+        2: (0, [Band(start=100, end=110, center=105.0, area=100.0), Band(start=200, end=250, center=225.0, area=80.0)]),
+        3: (0, [Band(start=100, end=110, center=105.0, area=100.0)]),
+    }
+
+    assert _corroborated_crop_artifact_bands(lane_bands) == {}
+
+
+def test_corroborated_crop_artifact_bands_needs_minimum_lane_count():
+    # Even with perfect agreement, fewer than MIN_ARTIFACT_CORROBORATION_LANES
+    # total sample lanes must never trigger exclusion -- too little
+    # cross-lane context to trust, e.g. a --lane single-lane run.
+    artifact = lambda offset: Band(start=5 + offset, end=45 + offset, center=25.0, area=500.0)
+    real_band = lambda offset: Band(start=100 + offset, end=110 + offset, center=105.0, area=100.0)
+    lane_bands = {
+        1: (0, [artifact(0), real_band(0)]),
+        2: (0, [artifact(1), real_band(1)]),
+    }
+
+    assert _corroborated_crop_artifact_bands(lane_bands) == {}
+
+
+def test_analyze_lane_detailed_exclude_bands_removes_from_selection_and_total_area():
+    # Direct test of the mechanism analyze_image wires up via
+    # _corroborated_crop_artifact_bands: excluding a band drops it from both
+    # total_area (the purity% denominator) and eligibility to be selected,
+    # regardless of whether it would otherwise have won on area.
+    profile = _profile_with_bands(300, [(50, 6.0), (150, 3.0)])
+
+    baseline_result, baseline_bands, baseline_target, baseline_total_area = _analyze_lane_detailed(
+        profile, lane_index=1, target_mw=None, calibration=None, allow_heuristic=True
+    )
+    assert baseline_result.confidence == "heuristic"
+    assert len(baseline_bands) == 2
+    artifact_band = max(baseline_bands, key=lambda b: b.area)  # the (50, 6.0) band wins on area
+    assert baseline_target == [artifact_band]
+
+    excluded_result, excluded_bands, excluded_target, excluded_total_area = _analyze_lane_detailed(
+        profile, lane_index=1, target_mw=None, calibration=None, allow_heuristic=True, exclude_bands=[artifact_band]
+    )
+
+    assert len(excluded_bands) == 1
+    assert excluded_total_area < baseline_total_area
+    assert excluded_target[0].center != artifact_band.center  # the other band now wins

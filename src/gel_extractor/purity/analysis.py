@@ -44,6 +44,25 @@ DEFAULT_MW_TOLERANCE_PERCENT = 20.0
 DEFAULT_BAND_SELECTION = "largest"
 BAND_SELECTIONS = ("largest", "mw-strict")
 
+# Cross-lane crop-artifact corroboration -- see AGENTS.md Known Limitations
+# (2026-07-22 entry) for the confirmed bug this exists to catch:
+# `detect_comb_fringe_end` can leave a broad, roughly uniform-intensity
+# leftover glued to a lane's own crop boundary that's wide/bright enough to
+# win band_selection="largest" on area alone, or simply inflate a lane's
+# total_area (and thus dilute purity_percent) even when it isn't selected.
+# A single lane's width/position alone isn't a safe enough signal to act
+# on -- calibrated against all 15 real ground-truth images, a per-lane
+# "this band is unusually wide" rule misfires on legitimately wide real
+# bands elsewhere in the gel (confirmed real regressions, including nearly
+# erasing a lane that otherwise matched confirmed purity almost exactly).
+# Requiring the SAME suspect band (by absolute row range) to recur across
+# most sample lanes of the SAME image is far more specific: a real band's
+# position is lane-specific, but a shared physical crop-boundary artifact
+# recurs at essentially the same row in every lane. Only lanes
+# contributing to a corroborated cluster get anything excluded.
+ARTIFACT_CORROBORATION_ROW_SLACK = 10
+MIN_ARTIFACT_CORROBORATION_LANES = 3
+
 # Placeholder -- see AGENTS.md Known Limitations ("dilution-detectability
 # limit," confirmed real by the user 2026-07-14): at high dilution, faint
 # contaminant bands drop below the detection floor before the target band
@@ -268,11 +287,27 @@ def _analyze_signal(
     else:
         selected = list(enumerate(sample_lanes, start=1))
 
+    # Two passes, not one: cross-lane crop-artifact corroboration (see
+    # `_corroborated_crop_artifact_bands`) needs every lane's bands/top_bound
+    # up front to decide what recurs across the image, before any lane's
+    # final result can be computed. The first pass crops and detects bands
+    # for every lane; `_analyze_lane_detailed` below recomputes bands from
+    # the same profile a second time (cheap -- a 1D baseline-correct plus
+    # peak-find, not another crop) rather than threading precomputed bands
+    # through its contract, since that contract is also used directly by
+    # `analyze_lane`'s single-lane callers with no cross-lane context at all.
+    lane_crops: dict[int, tuple[Lane, np.ndarray, int, "Centerline | None"]] = {}
+    lane_bands_for_corroboration: dict[int, tuple[int, list[Band]]] = {}
+    for idx, lane in selected:
+        profile, top_bound, centerline = crop_lane(signal, lane, bottom_bound)
+        lane_crops[idx] = (lane, profile, top_bound, centerline)
+        lane_bands_for_corroboration[idx] = (top_bound, detect_bands(correct_baseline(profile)))
+    crop_artifact_bands = _corroborated_crop_artifact_bands(lane_bands_for_corroboration)
+
     results: list[LaneResult] = []
     lane_total_areas: list[float] = []
     lane_debug_info: list[LaneDebugInfo] = []
-    for idx, lane in selected:
-        profile, top_bound, centerline = crop_lane(signal, lane, bottom_bound)
+    for idx, (lane, profile, top_bound, centerline) in lane_crops.items():
         # Each lane's band positions are relative to *its own* adaptive
         # top_bound, but `calibration` was fit against the ladder lane's own
         # top_bound -- if the two differ (comb depth varies lane to lane,
@@ -282,6 +317,7 @@ def _analyze_signal(
         # two crops differ (confirmed as a real bug on a real image, not
         # theoretical -- see AGENTS.md Implementation Status, 2026-07-14).
         position_offset = top_bound - ladder_top_bound
+        excluded = [crop_artifact_bands[idx]] if idx in crop_artifact_bands else None
         result, bands, target_bands, total_area = _analyze_lane_detailed(
             profile,
             lane_index=idx,
@@ -291,6 +327,7 @@ def _analyze_signal(
             allow_heuristic=allow_heuristic,
             position_offset=position_offset,
             band_selection=band_selection,
+            exclude_bands=excluded,
         )
         results.append(result)
         lane_total_areas.append(total_area)
@@ -390,6 +427,7 @@ def _analyze_lane_detailed(
     allow_heuristic: bool = False,
     position_offset: float = 0.0,
     band_selection: str = DEFAULT_BAND_SELECTION,
+    exclude_bands: list[Band] | None = None,
 ) -> tuple[LaneResult, list[Band], list[Band], float]:
     """Same as `analyze_lane`, but also returns the raw bands, the subset
     counted as the target, and this lane's total detected band area --
@@ -398,6 +436,15 @@ def _analyze_lane_detailed(
     `low_signal` comparison (see `LaneResult`). `analyze_lane` stays the
     stable public entry point returning just the result; this is where the
     actual work happens.
+
+    `exclude_bands`, when given, drops any detected band matching one in
+    that list (by value -- `Band` is a frozen dataclass) before anything
+    else runs, so it affects both `total_area` (the purity% denominator)
+    and which band is eligible to be selected as target. Only
+    `analyze_image` passes this, for a cross-lane-corroborated crop
+    artifact (see `_corroborated_crop_artifact_bands`); `analyze_lane`'s
+    single-lane callers have no cross-lane context to corroborate against,
+    so they always leave it `None`.
 
     Two independent branches below, deliberately not interleaved: `"mw-strict"`
     is byte-for-byte the original selection logic (a band only counts as
@@ -415,6 +462,8 @@ def _analyze_lane_detailed(
 
     corrected = correct_baseline(lane_profile)
     bands = detect_bands(corrected)
+    if exclude_bands:
+        bands = [b for b in bands if b not in exclude_bands]
     total_area = sum(b.area for b in bands)
 
     if not bands:
@@ -604,6 +653,60 @@ def _largest_band(bands: list[Band]) -> list[Band]:
     if not bands:
         return []
     return [max(bands, key=lambda b: b.area)]
+
+
+def _suspect_crop_artifact_band(bands: list[Band]) -> Band | None:
+    """This lane's one candidate for a shared top-of-gel crop artifact: the
+    band that is simultaneously the widest AND the closest to this lane's
+    own crop boundary. Requires at least 2 bands -- a lone detected band has
+    nothing to look anomalous relative to, so it's never flagged by this
+    alone (see `_corroborated_crop_artifact_bands`, which additionally
+    requires this same candidate to recur across other lanes before
+    anything is actually excluded).
+    """
+    if len(bands) < 2:
+        return None
+    widest = max(bands, key=lambda b: b.end - b.start)
+    closest_to_top = min(bands, key=lambda b: b.start)
+    return widest if widest is closest_to_top else None
+
+
+def _row_ranges_overlap(a: tuple[int, int], b: tuple[int, int], slack: int = ARTIFACT_CORROBORATION_ROW_SLACK) -> bool:
+    return a[0] <= b[1] + slack and b[0] <= a[1] + slack
+
+
+def _corroborated_crop_artifact_bands(lane_bands: dict[int, tuple[int, list[Band]]]) -> dict[int, Band]:
+    """Cross-lane corroboration for `_suspect_crop_artifact_band` -- see the
+    module-level comment above `ARTIFACT_CORROBORATION_ROW_SLACK` for why a
+    single lane's signal alone isn't trusted. `lane_bands` maps each sample
+    lane's index to `(top_bound, bands)`. Returns only the lanes whose
+    suspect band ended up in a cluster big enough to corroborate -- every
+    other lane's bands are left completely untouched, including lanes with
+    no suspect band at all.
+    """
+    candidates: dict[int, tuple[tuple[int, int], Band]] = {}
+    for lane_index, (top_bound, bands) in lane_bands.items():
+        suspect = _suspect_crop_artifact_band(bands)
+        if suspect is not None:
+            candidates[lane_index] = ((top_bound + suspect.start, top_bound + suspect.end), suspect)
+
+    clusters: list[dict] = []
+    for lane_index, (abs_range, band) in candidates.items():
+        cluster = next((c for c in clusters if _row_ranges_overlap(c["range"], abs_range)), None)
+        if cluster is None:
+            clusters.append({"lanes": {lane_index: band}, "range": abs_range})
+            continue
+        cluster["lanes"][lane_index] = band
+        lo = min(cluster["range"][0], abs_range[0])
+        hi = max(cluster["range"][1], abs_range[1])
+        cluster["range"] = (lo, hi)
+
+    threshold = max(MIN_ARTIFACT_CORROBORATION_LANES, len(lane_bands) // 2)
+    excluded: dict[int, Band] = {}
+    for cluster in clusters:
+        if len(cluster["lanes"]) >= threshold:
+            excluded.update(cluster["lanes"])
+    return excluded
 
 
 def _safe_percent(numerator: float, denominator: float) -> int:
