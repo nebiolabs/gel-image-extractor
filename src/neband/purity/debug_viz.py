@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from gel_extractor.purity.analysis import AnalysisDebugInfo, LaneResult
+from neband.purity.analysis import AnalysisDebugInfo, LaneResult
 
 LADDER_COLOR = (60, 120, 255)
 SAMPLE_LANE_COLOR = (255, 190, 0)

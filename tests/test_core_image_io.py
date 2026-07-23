@@ -1,6 +1,6 @@
 import numpy as np
 
-from gel_extractor.core.image_io import to_signal
+from neband.core.image_io import to_signal
 
 
 def test_to_signal_inverts_dark_bands_to_high_signal():

@@ -1,7 +1,7 @@
 import numpy as np
 from skimage.io import imsave
 
-from gel_extractor.purity.methods import METHOD_REGISTRY, MethodOutcome, run_all_methods, run_method
+from neband.purity.methods import METHOD_REGISTRY, MethodOutcome, run_all_methods, run_method
 
 
 def _write_synthetic_gel(tmp_path, synthetic_gel):

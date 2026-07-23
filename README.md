@@ -1,8 +1,10 @@
-# gel-image-extractor
+# NEBand
 
 A tool for extracting quantitative and categorical information from gel
 electrophoresis images, replacing manual/eyeballed operator judgment with a
-standardized, reproducible pipeline.
+standardized, reproducible pipeline. (Formerly `gel-image-extractor` —
+renamed 2026-07-23 as part of packaging this for reuse beyond `ebase`; see
+`AGENTS.md`'s Implementation Status and GH issue #1.)
 
 ## Status
 
@@ -44,7 +46,7 @@ the current architecture sketch.
 
 ```
 uv sync
-uv run gelx purity analyze "data/decodeon_gel_images/Protein Purity/8.6.25 Protein Purity.tif" \
+uv run neband purity analyze "data/decodeon_gel_images/Protein Purity/8.6.25 Protein Purity.tif" \
   --target-mw 29.267 --ladder P7719
 uv run pytest
 ```
@@ -91,7 +93,7 @@ rectangle by default [stable]; `viterbi` [promising]; `ridge`/`snake`
 [experimental] — see `AGENTS.md` Implementation Status for what each one
 actually is and its own caveats) — independent of `--band-selection`,
 which only decides target-band identity within whatever profile the chosen
-geometry produces. `gelx purity analyze --help` documents both in full.
+geometry produces. `neband purity analyze --help` documents both in full.
 
 ## What this project does (planned)
 
@@ -129,7 +131,7 @@ See `AGENTS.md` for the full rationale.
 - **Stack:** Python 3.11+; `numpy` + `scipy` + `scikit-image` for image
   processing; `argparse` for the CLI; `pyproject.toml` + `uv` for packaging/
   dependencies; `pytest` for testing.
-- **Interface:** one CLI entry point with subcommands (`gelx purity analyze
+- **Interface:** one CLI entry point with subcommands (`neband purity analyze
   gel.tif ...`), not separate binaries per workflow. Structured so a UI can
   be layered on later — decided 2026-07-16 that this means hosting inside
   `ebase` (an internal NEB app), with a single-image-upload UI whose

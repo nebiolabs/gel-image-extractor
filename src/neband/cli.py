@@ -1,14 +1,14 @@
-"""Top-level CLI entry point (`gelx`)."""
+"""Top-level CLI entry point (`neband`)."""
 
 import argparse
 import sys
 
-from gel_extractor.purity import cli as purity_cli
+from neband.purity import cli as purity_cli
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="gelx",
+        prog="neband",
         description="Extract quantitative and categorical data from gel electrophoresis images.",
     )
     subparsers = parser.add_subparsers(dest="workflow", required=True)

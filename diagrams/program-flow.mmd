@@ -1,6 +1,6 @@
 %% program-flow.mmd
 %% NOTE: Reflects the purity workflow as actually implemented and tested
-%% (src/gel_extractor/, 112 tests passing) plus the activity workflow's
+%% (src/neband/, 112 tests passing) plus the activity workflow's
 %% still-conceptual design (see AGENTS.md "Design Decisions" and
 %% "Implementation Status"). Not a full class/sequence diagram -- still a
 %% data-flow sketch, just one grounded in working code on the purity side.
@@ -21,7 +21,7 @@ flowchart TD
         BandDet["Band / peak detection<br/>(intensity profile + baseline correction)"]
     end
 
-    PurityLabel["purity workflow<br/>implemented (gelx purity analyze)"]
+    PurityLabel["purity workflow<br/>implemented (neband purity analyze)"]
     subgraph PurityWF[" "]
         AutoLane["Auto-detect lanes, trace per-lane profile<br/>(--method: rectangle [default, stable] /<br/>viterbi [promising] / ridge / snake<br/>[experimental] -- 4 registered geometry<br/>methods, this step differs per method;<br/>everything below is shared, geometry-agnostic)"]
         AdaptiveCrop["Adaptive vertical crop per lane<br/>(exclude comb/well fringe -- per-lane,<br/>row std-dev based; exclude shared<br/>bottom cassette/tape-edge artifact --<br/>whole-image, IQR-spread based)"]

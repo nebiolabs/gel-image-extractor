@@ -3,8 +3,8 @@ import json
 import numpy as np
 from skimage.io import imsave
 
-from gel_extractor.cli import main
-from gel_extractor.purity.methods import METHOD_REGISTRY
+from neband.cli import main
+from neband.purity.methods import METHOD_REGISTRY
 
 
 def _write_synthetic_gel(tmp_path, synthetic_gel):

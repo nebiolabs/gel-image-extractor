@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from gel_extractor.purity.analysis import analyze_image
+from neband.purity.analysis import analyze_image
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 # NOTE: the equivalent file under data/daria_data/attachments/ is a Benchling

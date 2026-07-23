@@ -47,7 +47,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from skimage.segmentation import active_contour
 
-from gel_extractor.core.lanes import Lane, detect_comb_fringe_end
+from neband.core.lanes import Lane, detect_comb_fringe_end
 
 # Number of control points along the snake's length. Coarser than the image's
 # own row count on purpose -- `active_contour` optimizes all points jointly,

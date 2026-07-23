@@ -5,9 +5,9 @@ from pathlib import Path
 
 import numpy as np
 
-from gel_extractor.core.bands import Band, correct_baseline, detect_bands
-from gel_extractor.core.image_io import load_image, to_signal
-from gel_extractor.core.ladder import (
+from neband.core.bands import Band, correct_baseline, detect_bands
+from neband.core.image_io import load_image, to_signal
+from neband.core.ladder import (
     LADDER_MIN_SNR,
     LadderCalibration,
     LadderCalibrationError,
@@ -15,7 +15,7 @@ from gel_extractor.core.ladder import (
     calibrate_ladder,
     get_ladder_bands,
 )
-from gel_extractor.core.lanes import Lane, detect_bottom_edge_artifact_start, detect_comb_fringe_end, detect_lanes
+from neband.core.lanes import Lane, detect_bottom_edge_artifact_start, detect_comb_fringe_end, detect_lanes
 
 # Placeholder -- see AGENTS.md Design Decisions ("±15-20% of expected MW,
 # deliberately approximate, to be tuned empirically"). Moved from the

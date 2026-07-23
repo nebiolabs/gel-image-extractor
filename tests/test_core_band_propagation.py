@@ -1,11 +1,11 @@
-from gel_extractor.core.band_propagation import (
+from neband.core.band_propagation import (
     absolute_row,
     exclude_deleted_bands,
     find_nearest_band,
     propagate_target_band,
     row_tolerance,
 )
-from gel_extractor.core.bands import Band
+from neband.core.bands import Band
 
 
 def _band(center: float, area: float = 100.0) -> Band:

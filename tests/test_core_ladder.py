@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from gel_extractor.core.bands import correct_baseline, detect_bands
-from gel_extractor.core.ladder import (
+from neband.core.bands import correct_baseline, detect_bands
+from neband.core.ladder import (
     LadderCalibrationError,
     UnknownLadderError,
     calibrate_ladder,

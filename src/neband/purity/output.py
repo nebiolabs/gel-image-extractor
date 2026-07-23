@@ -10,7 +10,7 @@ import csv
 import io
 from pathlib import Path
 
-from gel_extractor.purity.analysis import LaneResult
+from neband.purity.analysis import LaneResult
 
 FIELDS = [
     "method",

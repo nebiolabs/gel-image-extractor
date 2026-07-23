@@ -5,11 +5,11 @@ import json
 import sys
 from pathlib import Path
 
-from gel_extractor.core.image_io import load_image
-from gel_extractor.purity.analysis import BAND_SELECTIONS, DEFAULT_BAND_SELECTION, DEFAULT_MW_TOLERANCE_PERCENT
-from gel_extractor.purity.debug_viz import save_debug_image
-from gel_extractor.purity.methods import METHOD_REGISTRY, run_all_methods, run_method
-from gel_extractor.purity.output import format_csv, format_table, to_payload, write_output
+from neband.core.image_io import load_image
+from neband.purity.analysis import BAND_SELECTIONS, DEFAULT_BAND_SELECTION, DEFAULT_MW_TOLERANCE_PERCENT
+from neband.purity.debug_viz import save_debug_image
+from neband.purity.methods import METHOD_REGISTRY, run_all_methods, run_method
+from neband.purity.output import format_csv, format_table, to_payload, write_output
 
 
 def add_subparser(subparsers: argparse._SubParsersAction) -> None:

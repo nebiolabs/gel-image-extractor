@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from gel_extractor.core.bands import correct_baseline, detect_bands
+from neband.core.bands import correct_baseline, detect_bands
 
 # Known ladder band sizes (kDa), sorted descending (highest MW first, since
 # higher-MW bands migrate less and sit closer to the top of the gel).

@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 
-from gel_extractor.core.lanes import Lane, apply_lane_corrections, detect_lanes
+from neband.core.lanes import Lane, apply_lane_corrections, detect_lanes
 
 
 def test_detect_lanes_finds_expected_number_and_bounds():
@@ -82,7 +82,7 @@ def test_detect_lanes_does_not_merge_two_normal_width_lanes():
 
 
 def test_detect_comb_fringe_end_finds_elevated_variability_region():
-    from gel_extractor.core.lanes import detect_comb_fringe_end
+    from neband.core.lanes import detect_comb_fringe_end
 
     rng = np.random.default_rng(0)
     height, width = 300, 40
@@ -96,7 +96,7 @@ def test_detect_comb_fringe_end_finds_elevated_variability_region():
 
 
 def test_detect_comb_fringe_end_falls_back_when_no_fringe_present():
-    from gel_extractor.core.lanes import detect_comb_fringe_end
+    from neband.core.lanes import detect_comb_fringe_end
 
     lane_columns = np.full((300, 40), 0.5)  # perfectly flat -- no comb fringe anywhere
 
@@ -106,7 +106,7 @@ def test_detect_comb_fringe_end_falls_back_when_no_fringe_present():
 
 
 def test_detect_bottom_edge_artifact_start_finds_anomalous_tail():
-    from gel_extractor.core.lanes import detect_bottom_edge_artifact_start
+    from neband.core.lanes import detect_bottom_edge_artifact_start
 
     rng = np.random.default_rng(0)
     height, width = 300, 40
@@ -120,7 +120,7 @@ def test_detect_bottom_edge_artifact_start_finds_anomalous_tail():
 
 
 def test_detect_bottom_edge_artifact_start_falls_back_when_no_artifact_present():
-    from gel_extractor.core.lanes import detect_bottom_edge_artifact_start
+    from neband.core.lanes import detect_bottom_edge_artifact_start
 
     columns = np.full((300, 40), 0.5)  # perfectly flat -- nothing anomalous anywhere
 

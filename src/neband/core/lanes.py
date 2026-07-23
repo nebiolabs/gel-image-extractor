@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
-from gel_extractor.core.bands import correct_baseline, rolling_minimum_baseline
+from neband.core.bands import correct_baseline, rolling_minimum_baseline
 
 # Tunable knobs, centralized per the project's "no scattered magic numbers"
 # architecture requirement. Expected to need empirical tuning against real

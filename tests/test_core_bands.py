@@ -1,6 +1,6 @@
 import numpy as np
 
-from gel_extractor.core.bands import correct_baseline, detect_bands, estimate_noise_level
+from neband.core.bands import correct_baseline, detect_bands, estimate_noise_level
 
 
 def test_correct_baseline_removes_slow_drift():

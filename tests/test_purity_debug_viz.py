@@ -3,8 +3,8 @@ from dataclasses import replace
 import numpy as np
 from skimage.io import imsave
 
-from gel_extractor.purity.analysis import Centerline, analyze_image
-from gel_extractor.purity.debug_viz import MATURITY_BANNER_COLOR, MISMATCH_BAND_COLOR, render_debug_image
+from neband.purity.analysis import Centerline, analyze_image
+from neband.purity.debug_viz import MATURITY_BANNER_COLOR, MISMATCH_BAND_COLOR, render_debug_image
 
 
 def _write_synthetic_gel_with_contaminant(tmp_path, synthetic_gel):

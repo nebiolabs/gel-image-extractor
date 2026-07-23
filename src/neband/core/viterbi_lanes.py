@@ -176,7 +176,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 
-from gel_extractor.core.lanes import Lane, detect_lanes
+from neband.core.lanes import Lane, detect_lanes
 
 # Per-pixel cost of horizontal displacement, in the same units as the
 # reward (a column-window intensity sum on a [0, 1]-normalized signal, see

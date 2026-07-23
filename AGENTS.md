@@ -1,6 +1,7 @@
 # AGENTS.md
 
-Working notes for AI-assisted development on `gel-image-extractor`. This document
+Working notes for AI-assisted development on `neband` (renamed from
+`gel-image-extractor` 2026-07-23, see Implementation Status). This document
 captures project scope and collaboration ground rules as they're established.
 Update it as understanding evolves — it should stay in sync with what's actually
 been discussed, not get ahead of it.
@@ -87,7 +88,7 @@ without cause:
   Planned layout (`activity/` not yet created -- only `core/` and `purity/`
   exist on disk today):
   ```
-  src/gel_extractor/
+  src/neband/
     core/       # shared image-processing primitives
     purity/     # sub-project 1 workflow (implemented)
     activity/   # sub-project 2 workflow (not yet built)
@@ -291,9 +292,11 @@ without cause:
   as PyPI wheels, no need for conda's binary management); `pytest` for
   testing.
 - **One CLI entry point with subcommands (confirmed 2026-07-13)**, not
-  separate binaries per workflow — e.g. `gelx purity analyze gel.tif`,
+  separate binaries per workflow — e.g. `neband purity analyze gel.tif`,
   reflecting the actual shared-core/separate-workflows architecture. Command
-  name finalized as **`gelx`** during implementation.
+  name finalized as **`neband`** during implementation; renamed to **`neband`**
+  2026-07-23 along with the whole package/repo (see the dedicated rename
+  entry in Implementation Status) — no functional change, same command.
 - **Output formats (decided 2026-07-13): table (default) + optional CSV/JSON,
   additive not mutually exclusive.** Human-readable table always prints to
   stdout by default. `--csv [PATH]`: if a path is given, writes a CSV file
@@ -359,9 +362,9 @@ rectangle/viterbi/ridge/snake/all`, default `rectangle`) and 2 band-
 selection strategies (`--band-selection largest/mw-strict`, default
 `largest`, largest-band selection since 2026-07-17 — see this section's
 dated entries below for the full history). Package layout:
-`src/gel_extractor/{core,purity}/`
-(src-layout), entry point `gelx` (`gelx purity analyze <image> --target-mw
-KDA [...]`). Run via `uv run gelx ...`; tests via `uv run pytest`. Test suite
+`src/neband/{core,purity}/`
+(src-layout), entry point `neband` (`neband purity analyze <image> --target-mw
+KDA [...]`). Run via `uv run neband ...`; tests via `uv run pytest`. Test suite
 composition: unit tests per `core` module (synthetic, deterministic data),
 end-to-end pipeline tests via synthetic gel images, CLI tests (table/CSV/
 JSON/error paths), and integration tests against real example gel images
@@ -510,7 +513,7 @@ kept here is every decision, root cause, and "don't retry X" warning.
     ground truth. A background agent then prototyped per-strip lane
     detection + simple centroid tracking (deliberately skipping the harder
     lane-split/merge problem) on branch `curve-tracing-lane-detection`
-    (`src/gel_extractor/core/curve_lanes.py`, not merged, not wired into the
+    (`src/neband/core/curve_lanes.py`, not merged, not wired into the
     real pipeline). **Result: real, visible improvement on a well-behaved
     gel** (HpyCH4IV — curves follow the comb-tooth angle better than
     rectangles) **but did not fix the motivating hard case**: on `PDEV1452`,
@@ -1385,8 +1388,26 @@ kept here is every decision, root cause, and "don't retry X" warning.
   bundler rather than an npm package, the productionized API's cache-
   isolation/concurrency/auth/versioning/idempotency requirements, and the
   remaining open questions (DB schema, process supervision) -- is tracked
-  in **GH issue #1** (https://github.com/nebiolabs/gel-image-extractor/issues/1),
+  in **GH issue #1** (https://github.com/nebiolabs/neband/issues/1),
   not duplicated here. Nothing from that design is implemented yet.
+- **Project renamed `gel-image-extractor` -> `neband`, 2026-07-23.** Once
+  the packaging goal was clarified as "reusable/open-sourceable in any
+  context, `ebase` is the first validated consumer, not the only one" (see
+  GH issue #1), a real product name mattered more than it did for a
+  disposable internal tool. Landed on **NEBand** (NEB + "band," the actual
+  gel-band terminology) after a naming brainstorm; `neband` (lowercase) is
+  the actual repo/package/CLI slug, matching npm/PyPI naming conventions
+  and `plate-map`'s own lowercase-hyphenated precedent. Scope of the rename
+  (deliberately chosen as "everything now" over "just the GitHub repo
+  container," once asked which was wanted): GitHub repo
+  (`nebiolabs/gel-image-extractor` -> `nebiolabs/neband`, GitHub
+  auto-redirects the old URL), local git remote, `pyproject.toml`'s
+  package name, the CLI command (`gelx` -> `neband`, same subcommands,
+  no functional change), and the internal module
+  (`src/gel_extractor/` -> `src/neband/`, every import updated). 112/112
+  tests still pass post-rename. The repo is public on GitHub but has no
+  LICENSE file yet — a real gap given the stated open-source goal, flagged
+  but not yet resolved (license choice deferred, see Open Questions).
 
 ## Planned Features — Not Yet Built
 
@@ -1402,7 +1423,7 @@ without confirming scope first (see Working Agreements).
   bright magenta, filled directly on the image) and confirmed it's
   independently valuable to end users, not just a developer debugging
   aid. Confirmed no git action needed right now, just that the capability
-  must not be lost: `src/gel_extractor/purity/debug_viz.py` already does
+  must not be lost: `src/neband/purity/debug_viz.py` already does
   the outline-style version of this, git-tracked, wired to `--debug` — that
   is the durable home for the requirement when this reaches `ebase`, not
   the disposable HITL prototype. See memory `ebase_hosting`. Tracked
@@ -1575,6 +1596,14 @@ users (the project submitters, reviewers, etc.) instead live in
 `QUESTIONS_FOR_USERS.md` — check there for the current accrued list before
 assuming a piece of domain knowledge (e.g. "is this ladder the standard one")
 rather than guessing.
+
+- **What license should `neband` use?** Raised 2026-07-23 alongside the
+  rename — the repo is public on GitHub with no LICENSE file, so nothing
+  is actually legally reusable despite being visible, a real gap given the
+  stated open-source goal. NEB's own `plate-map` repo uses
+  AGPL-3.0-only, which may reflect an actual NEB policy for open-source
+  projects rather than a one-off choice — worth checking before assuming
+  either way. Deferred, not decided.
 
 - ~~Is the 3-method shortlist... confirmed, or still just a proposal?~~
   **RESOLVED 2026-07-16**: Jacob decided to develop **all 6** prototypes
@@ -1859,7 +1888,7 @@ numbers and superseded narrative detail, not decisions or warnings.
 - **`scripts/` is gitignored** — local dev/debug tooling only, not shipped
   with the package. `scripts/generate_debug_images.py` runs every real
   example image (with its confirmed target MW from Data Inventory where
-  known, `--allow-heuristic` otherwise) through `gelx purity analyze
+  known, `--allow-heuristic` otherwise) through `neband purity analyze
   --debug`, writing annotated images to `data/debug_images/` — a quick way
   to eyeball lane/band detection across the whole example set after a
   pipeline change, not a substitute for the automated test suite.

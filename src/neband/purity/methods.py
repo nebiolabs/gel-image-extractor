@@ -19,9 +19,9 @@ from pathlib import Path
 
 import numpy as np
 
-from gel_extractor.core.image_io import load_image, to_signal
-from gel_extractor.core.lanes import detect_comb_fringe_end, detect_lanes
-from gel_extractor.core.ridge_lanes import (
+from neband.core.image_io import load_image, to_signal
+from neband.core.lanes import detect_comb_fringe_end, detect_lanes
+from neband.core.ridge_lanes import (
     DEFAULT_MIN_ROW_SMOOTHING_SIGMA as RIDGE_MIN_ROW_SMOOTHING_SIGMA,
     DEFAULT_PROFILE_HALF_WIDTH_FRACTION as RIDGE_PROFILE_HALF_WIDTH_FRACTION,
     DEFAULT_ROW_SMOOTHING_FRACTION as RIDGE_ROW_SMOOTHING_FRACTION,
@@ -31,9 +31,9 @@ from gel_extractor.core.ridge_lanes import (
     extract_curved_profile as ridge_extract_curved_profile,
     trace_centerline,
 )
-from gel_extractor.core.snake_lanes import trace_and_extract_profile
-from gel_extractor.core.viterbi_lanes import extract_curved_profile, trace_lanes_from_detected
-from gel_extractor.purity.analysis import (
+from neband.core.snake_lanes import trace_and_extract_profile
+from neband.core.viterbi_lanes import extract_curved_profile, trace_lanes_from_detected
+from neband.purity.analysis import (
     AnalysisDebugInfo,
     Centerline,
     DEFAULT_BAND_SELECTION,

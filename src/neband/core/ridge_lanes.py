@@ -146,16 +146,16 @@ import numpy as np
 from scipy.ndimage import gaussian_filter, gaussian_filter1d
 from skimage.filters import meijering
 
-from gel_extractor.core.image_io import load_image, to_signal
-from gel_extractor.core.ladder import (
+from neband.core.image_io import load_image, to_signal
+from neband.core.ladder import (
     LadderCalibration,
     LadderCalibrationError,
     UnknownLadderError,
     calibrate_ladder,
     get_ladder_bands,
 )
-from gel_extractor.core.lanes import Lane, detect_bottom_edge_artifact_start, detect_comb_fringe_end, detect_lanes
-from gel_extractor.purity.analysis import (
+from neband.core.lanes import Lane, detect_bottom_edge_artifact_start, detect_comb_fringe_end, detect_lanes
+from neband.purity.analysis import (
     DEFAULT_LOW_SIGNAL_FRACTION,
     DEFAULT_MW_TOLERANCE_PERCENT,
     LadderNotCalibratedError,

@@ -111,7 +111,7 @@ outside domain knowledge or a business/scope call.
   TET3 (R-218) - 58218.74 Da (58.219 kDa)
   CL-ASR29 - 44599.87 Da (44.600 kDa)
   ```
-  Now seeded in `AGENTS.md` Data Inventory. Ran all 5 through `gelx purity
+  Now seeded in `AGENTS.md` Data Inventory. Ran all 5 through `neband purity
   analyze` against their matching real images (see Implementation Status) —
   results are mixed, not a clean validation win: TelA's ladder lane fails to
   calibrate at all (genuinely low-contrast/low-band-count in that scan), the

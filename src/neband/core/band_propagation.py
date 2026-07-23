@@ -18,7 +18,7 @@ band-selection/geometry idea in this project was prototyped in isolation
 before earning CLI integration.
 """
 
-from gel_extractor.core.bands import Band
+from neband.core.bands import Band
 
 # Never a fixed pixel constant -- this project's real images range from
 # phone photos to scanner TIFFs, so a tolerance tuned to one image's

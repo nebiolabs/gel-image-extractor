@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 from skimage.io import imsave
 
-from gel_extractor.core.bands import Band
-from gel_extractor.core.ladder import LadderCalibration
-from gel_extractor.purity.analysis import (
+from neband.core.bands import Band
+from neband.core.ladder import LadderCalibration
+from neband.purity.analysis import (
     LadderNotCalibratedError,
     _analyze_lane_detailed,
     _corroborated_crop_artifact_bands,
