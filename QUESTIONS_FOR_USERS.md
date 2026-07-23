@@ -170,7 +170,13 @@ outside domain knowledge or a business/scope call.
   tool whose original goal (per the Project Overview) was replacing manual
   eyeballing with something fast and automatic. This is a real product/
   workflow tradeoff for the actual end users to weigh in on, not something
-  Jacob/Claude should decide unilaterally — not yet built, no decision made.
+  Jacob/Claude should decide unilaterally — a disposable local prototype now
+  exists (see `AGENTS.md` Implementation Status) to inform the answer, and
+  as of 2026-07-23 the engineering design to productionize it into `ebase`
+  has begun (see GH issue #1). That reflects confidence the interaction
+  model itself works, not a domain-expert-confirmed decision that
+  human-in-the-loop is the right tradeoff over full automation — this
+  question is still open for the actual end users to weigh in on.
 
 ## Activity workflow
 
@@ -194,10 +200,13 @@ outside domain knowledge or a business/scope call.
 
 ---
 
-*Last updated: 2026-07-17 (new question added on whether a human-in-the-loop
+*Last updated: 2026-07-23 (noted that productionization design for the
+human-in-the-loop band-marking UI has begun, tracked in GH issue #1, without
+resolving the underlying open question of whether it's the right tradeoff).
+Prior update 2026-07-17: new question added on whether a human-in-the-loop
 band-marking UI is an acceptable tradeoff, prompted by the multi-method
 lane-detection work's finding that band/lane identification, not lane
-shape, is the consistent accuracy bottleneck). Prior update 2026-07-14:
+shape, is the consistent accuracy bottleneck. Prior update 2026-07-14:
 ladder-standardization, low-contrast-scan-cause, embedded-standards, and
 dilution-detectability-handling questions all answered/decided; P7717 and
 N0550 ladder band lists obtained; 2 of the 4 unlabeled images identified;

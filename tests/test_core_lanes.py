@@ -1,6 +1,7 @@
+import pytest
 import numpy as np
 
-from gel_extractor.core.lanes import detect_lanes
+from gel_extractor.core.lanes import Lane, apply_lane_corrections, detect_lanes
 
 
 def test_detect_lanes_finds_expected_number_and_bounds():
@@ -126,3 +127,72 @@ def test_detect_bottom_edge_artifact_start_falls_back_when_no_artifact_present()
     bottom_bound = detect_bottom_edge_artifact_start(columns, min_margin_fraction=0.02)
 
     assert bottom_bound == 300 - int(300 * 0.02)
+
+
+def test_apply_lane_corrections_no_op_passes_through_unchanged():
+    lanes = [Lane(index=0, x_start=10, x_end=30), Lane(index=1, x_start=50, x_end=70)]
+
+    result = apply_lane_corrections(lanes)
+
+    assert result == lanes
+
+
+def test_apply_lane_corrections_merges_group_into_one_lane():
+    # A smear fragmented into 3 fake lanes -- the dominant real failure mode
+    # this exists to fix (see AGENTS.md).
+    lanes = [
+        Lane(index=0, x_start=100, x_end=110),
+        Lane(index=1, x_start=115, x_end=122),
+        Lane(index=2, x_start=130, x_end=140),
+    ]
+
+    result = apply_lane_corrections(lanes, merge_groups=[[0, 1, 2]])
+
+    assert len(result) == 1
+    assert result[0].x_start == 100
+    assert result[0].x_end == 140
+    assert result[0].index == 0
+
+
+def test_apply_lane_corrections_drops_lane():
+    lanes = [
+        Lane(index=0, x_start=10, x_end=30),
+        Lane(index=1, x_start=50, x_end=70),  # e.g. a text/well-fringe artifact
+        Lane(index=2, x_start=90, x_end=110),
+    ]
+
+    result = apply_lane_corrections(lanes, drop=[1])
+
+    assert len(result) == 2
+    assert [lane.x_start for lane in result] == [10, 90]
+    assert [lane.index for lane in result] == [0, 1]  # re-indexed
+
+
+def test_apply_lane_corrections_merge_and_drop_together_reindexed_by_position():
+    lanes = [
+        Lane(index=0, x_start=10, x_end=20),
+        Lane(index=1, x_start=30, x_end=35),
+        Lane(index=2, x_start=37, x_end=40),
+        Lane(index=3, x_start=60, x_end=80),  # dropped
+    ]
+
+    result = apply_lane_corrections(lanes, merge_groups=[[1, 2]], drop=[3])
+
+    assert len(result) == 2
+    assert result[0].x_start == 10 and result[0].x_end == 20
+    assert result[1].x_start == 30 and result[1].x_end == 40
+    assert [lane.index for lane in result] == [0, 1]
+
+
+def test_apply_lane_corrections_rejects_double_reference():
+    lanes = [Lane(index=0, x_start=10, x_end=20), Lane(index=1, x_start=30, x_end=40)]
+
+    with pytest.raises(ValueError, match="more than one correction"):
+        apply_lane_corrections(lanes, merge_groups=[[0, 1]], drop=[1])
+
+
+def test_apply_lane_corrections_rejects_unknown_index():
+    lanes = [Lane(index=0, x_start=10, x_end=20)]
+
+    with pytest.raises(ValueError, match="unknown lane index"):
+        apply_lane_corrections(lanes, drop=[99])

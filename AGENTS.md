@@ -353,7 +353,7 @@ without cause:
 
 ## Implementation Status
 
-**Current state (2026-07-20): purity workflow implemented and tested, 84
+**Current state (2026-07-21): purity workflow implemented and tested, 100
 tests passing.** 4 lane-geometry methods registered (`--method
 rectangle/viterbi/ridge/snake/all`, default `rectangle`) and 2 band-
 selection strategies (`--band-selection largest/mw-strict`, default
@@ -1111,6 +1111,282 @@ kept here is every decision, root cause, and "don't retry X" warning.
       burned-in text, a more general well-fringe detector, flagging
       "smear vs. distinct bands" before over-segmenting) are listed in the
       writeup but not evaluated against each other or decided on.
+- **Human-in-the-loop band-selection prototype, Phase 1 (algorithm only,
+  2026-07-21, branch `human-in-the-loop-band-selection`) — built and
+  tested, but the evaluation is an inconclusive null test, not a negative
+  result.** Followed directly from the reassessment above: rather than
+  building the throwaway UI first, an approved plan (see
+  `/Users/jmiller/.claude/plans/zesty-wandering-bentley.md`) tested the
+  algorithmic core — does propagating a human-identified target band to
+  the rest of a dilution series by row position actually help — with zero
+  UI code, against all 15 confirmed ground-truth images, deferring the UI
+  to a Phase 2 gated on Phase 1 showing real signal.
+  - **Built**: `core/lanes.py` gained `apply_lane_corrections` (one atomic
+    merge/drop transaction against `detect_lanes`'s original output, not a
+    queue of incremental ops — avoids index-drift ambiguity). New
+    `core/band_propagation.py`: `absolute_row` (reuses the exact
+    `position_offset`/`top_bound` convention `purity/analysis.py` and
+    `purity/debug_viz.py` already use, not a third independent copy),
+    `find_nearest_band` (tolerance derived from the image's own resolving
+    height, never a fixed pixel constant; an ambiguity gate returns `None`
+    rather than a confident wrong pick when two candidates are nearly
+    equidistant; also serves as the reference-click-snapping logic),
+    `propagate_target_band` (explicit `series_lanes` selection, since real
+    images in this project mix dilution series with non-series lanes like
+    embedded standards). 16 new unit tests, 100/100 passing overall.
+    Standalone experimental module, not wired into `METHOD_REGISTRY`.
+  - **Correction records authored systematically, not freehand** (see
+    `scripts/author_hitl_correction_records.py`): a mechanical policy —
+    drop lanes wider than 1.8x the image's own median lane width or with
+    zero bands; reference lane = largest single band among lanes whose
+    comb-fringe crop looks trustworthy; series lanes = everything else
+    surviving. Deliberately blind to confirmed purity/MW values (uses only
+    structural signals), which matters for the bias caveat the approved
+    plan flagged — a real human or a model would still need to be tested
+    separately, but this specific pass isn't reverse-engineered from the
+    answer.
+  - **The evaluation result is a null test, not evidence against the
+    hypothesis — important to state precisely.** The policy's "reference
+    band" choice is mechanically identical to today's automatic `largest`
+    rule, so on the one lane per image with real confirmed ground truth,
+    human-assisted and automatic produced *identical* numbers in all 6
+    purity images (mean error 16.2pp, both). This never tested whether an
+    independent human pick beats the heuristic — it tested whether
+    reimplementing the same heuristic differently changes anything, which
+    it structurally cannot. On the *other* lanes in each series (where
+    propagation does something automatic doesn't), there is no per-lane
+    ground truth at all — only one confirmed value per image — so
+    propagated results could only be compared *against automatic's own
+    guess*, not against truth. They often differ substantially (e.g.
+    R-217 lane 6: auto 40% vs. propagated 11%), but which is more correct
+    is genuinely unknown from this data.
+  - **A real secondary finding, arguably more actionable than the original
+    question**: authoring the correction records surfaced that the
+    comb-fringe-crop failure (`detect_comb_fringe_end` falling back to the
+    trivial ~2% margin instead of finding the real fringe) is far more
+    widespread across this 15-image ground-truth set than the single
+    example in the Formulation & Purification batch review suggested —
+    often affecting most lanes in an image, with several showing
+    suspiciously uniform high "matched MW" values (180-300 kDa) across
+    *different* proteins/images, consistent with all of them independently
+    hitting the same mis-cropped well artifact rather than distinct real
+    high-MW contaminants. Not root-caused or fixed; flagged here since it
+    has concrete evidence of causing bad results independent of the
+    human-in-the-loop question.
+  - **Also found**: propagation's honest-miss rate is high (roughly a third
+    to two-thirds of series lanes per image return `None` rather than a
+    match) — consistent with a Plan-agent-flagged risk that a
+    fixed-fraction-of-resolving-height tolerance may not survive real gel
+    curvature/smiling, not yet evidence either way on the core hypothesis.
+  - **Phase 2 (the throwaway Flask/canvas UI) was NOT built as a next
+    step from Phase 1's signal** — instead, Jacob proposed the direct fix
+    once he understood what Phase 1 had actually tested (a mechanical
+    stand-in, not a real human): build a real interface so a genuine,
+    independent human judgment call replaces the stand-in. Built the same
+    day, see the entry immediately below.
+- **Human-in-the-loop review UI, Phase 2 (2026-07-21, same branch) —
+  built and verified end-to-end, real usage not yet done.** A real
+  interactive tool, not another algorithm test: a person draws/deletes
+  lane boxes and marks the target band themselves; the server snaps that
+  click to a real detected band and propagates it across the series using
+  the exact same tested Phase 1 code (`band_propagation.py`,
+  unmodified). See `/Users/jmiller/.claude/plans/zesty-wandering-bentley.md`
+  for the full plan and [[human_in_the_loop_prototype_phase1]] for the
+  Phase 1 context this responds to.
+  - **`scripts/hitl_ui_server.py`** (Flask, `uv run --with flask` — ad hoc
+    dependency matching the `python-pptx` precedent, not added to
+    `pyproject.toml`) + **`scripts/hitl_ui_static/review.html`** (vanilla
+    JS/canvas, no framework). `GET /?image=<name>` serves any number of
+    images passed at startup with prev/next-style switching (no restart
+    needed between images); `POST /analyze` runs the human's corrected
+    lanes through `purity/analysis.py`'s `_default_crop_lane` (private,
+    already cross-module-imported elsewhere in this codebase, e.g. by
+    `purity/methods.py` — not a new pattern), `core.bands.detect_bands`,
+    `core.ladder.calibrate_ladder`, and the tested `band_propagation`
+    module, then writes a correction-record JSON to `data/hitl_correction_
+    records/` in the exact schema `scripts/evaluate_human_assisted_
+    propagation.py` already reads — that script is reused **unmodified**
+    for the real comparison once real sessions exist.
+  - **Never accepts or displays a confirmed target MW or confirmed
+    purity** — deliberate, to avoid repeating Phase 1's bias trap; any
+    comparison against a known answer happens separately, after using the
+    tool.
+  - **Anti-bias constraints built in, not left as polish**: no detected-
+    band hints, counts, or areas shown before the person clicks Analyze
+    (that's exactly the signal the `largest` heuristic runs on); no
+    pre-selected reference lane; a second contrast preset (percentile-clip
+    "boost faint signal," alongside the default global min/max stretch
+    `debug_viz.py` already uses) so a lane `detect_bands` can see via local
+    baseline correction isn't invisible to the human under one fixed
+    global stretch (removed 2026-07-22 as not useful in practice, replaced
+    by an "invert (negative)" preset -- see the Phase 2.1 entry below).
+  - **Explicit no-match reasons, not blank cells**: a `None` propagation
+    result (the median case for several lanes per image, per Phase 1)
+    reports *why* — "no band within tolerance," "ambiguous -- two
+    candidates too close to call," or "no bands detected in this lane" —
+    verified working end-to-end against a real image (see below).
+  - **Verified end-to-end** against `8.6.25 Protein Purity.tif` (a
+    known-good case): page loads, all 10 auto-detected lanes render,
+    marking a real reference band and submitting correctly reproduced a
+    sane result on the reference lane (58%, 27.9 kDa vs. the pipeline's
+    own earlier 58%/28.75 kDa on the same image) and produced all three
+    distinct miss-reason types across the rest of the series; a
+    deliberately-wrong click (row 20, no real band nearby) correctly
+    returned a 400 error rather than a fabricated result; a 2-image
+    startup confirmed switching images via `?image=` works without a
+    restart. **What wasn't and can't be verified by me**: whether a real
+    person's independent judgment through this tool actually beats the
+    automatic heuristic — that requires Jacob (or someone else) to use it
+    with genuine visual judgment, which hasn't happened yet.
+  - **Deliberately out of scope for this pass**: vertical crop bounds
+    still come from the existing adaptive comb-fringe/bottom-edge
+    detection, not human-editable — a real, known limitation given Phase
+    1 found comb-fringe-crop failure is a large, confirmed error source in
+    this exact ground-truth set; per-lane edge-drag handles for precision
+    nudging; multi-point centerline/curve tracing for smiling lanes.
+  - **Usability follow-ups (same day, after Jacob's first real use)**: an
+    on-page collapsible instructions panel, and every lane now shows a
+    visible number on its box (ladder = "Ladder"; sample lanes 1, 2, 3...
+    left to right, recomputed live) — replacing raw x-coordinate ranges
+    everywhere (checkboxes, ladder dropdown, results table, reference
+    readout). Also clarified: unchecking "include in series" keeps a lane
+    visible/selectable but skips it during propagation, while deleting
+    removes it entirely; exactly one band click is needed total, in one
+    reference lane, never one per lane. **Known current limitation**: no
+    way to manually override a single lane's propagated result without
+    re-marking the whole image's reference — a real gap if it turns out to
+    matter, not yet built. (Partially resolved 2026-07-22 by "Delete band,"
+    see the Phase 2.1 entry below — a lane's result can now be corrected
+    without re-marking the reference, but only by discarding a wrong band
+    to "unmatched," not by picking a specific different one.)
+  - **Committed 2026-07-21** (`3ca7b2f` on `human-in-the-loop-band-
+    selection`) — only the tested algorithm (`core/band_propagation.py`,
+    `core/lanes.py`'s `apply_lane_corrections`) plus docs/tests, verified
+    clean of any Flask/server/networking code beforehand. The Flask
+    server/UI itself stays gitignored under `scripts/`, matching this
+    project's standing `scripts/`/`data/` convention. **Confirmed with
+    Jacob**: this local prototype is explicitly disposable, for validating
+    the interaction model only — if the human-in-the-loop direction pans
+    out from real usage, the real integration path is `ebase` (see Design
+    Decisions' hosting entry), not this Flask app.
+- **Fixed, 2026-07-22: cross-lane crop-artifact corroboration for
+  `band_selection="largest"`.** See Known Limitations' entry for the bug
+  itself (a broad crop-boundary leftover winning "largest" on area alone,
+  confirmed on `8.6.25 Protein Purity.tif` lanes 4-8, ~137-218 kDa instead
+  of the real ~29 kDa) -- this entry is the fix and how it was validated.
+  Two candidate fixes were tried and rejected first, calibrated against all
+  15 real ground-truth images before either was trusted: (1) exclude any
+  band whose width is a strong outlier vs. the *median* width of every
+  other band in its own lane -- too blunt at every multiplier tested (2.0
+  through 4.0): still failed to fix the target lanes at the threshold
+  needed to avoid collateral damage, and broke multiple other real images
+  along the way (worst case, `R-236_PID1502_PDEV1580_98.5pct...` dropped
+  from 98% purity, matching its confirmed 98.5%, to 2%, on 3 lanes). (2) a
+  narrower single-lane rule (exclude only a band that's simultaneously the
+  widest AND closest to the crop boundary in its own lane) improved but
+  still regressed several unrelated images and still badly damaged the
+  same confirmed 98.5%-purity case. **What actually worked**: the same
+  single-lane "widest AND closest to top" candidate from attempt (2), but
+  only acted on when the *same* candidate band (by absolute row range, ±10
+  px slack) recurs across at least half the image's sample lanes (minimum
+  3) -- i.e. corroborated across the image, not judged from one lane in
+  isolation. Calibrated result: touches only 2 of the 15 ground-truth
+  images (the one with the confirmed bug, plus one other where it only
+  ever *increases* purity% via a more accurate denominator, never changes
+  which band is selected), and leaves the other 13 -- including the
+  98.5%-confirmed case -- completely untouched. Re-verified in
+  `band_selection="mw-strict"` mode too: every `matched_band_mw` across all
+  15 images is byte-identical before/after; the fix only removes the
+  artifact's bogus area from the purity% denominator, never changes which
+  band gets MW-matched. Implementation: `_suspect_crop_artifact_band` (the
+  per-lane candidate) and `_corroborated_crop_artifact_bands` (the
+  cross-lane agreement check) in `purity/analysis.py`; `analyze_image` now
+  runs lane cropping/band-detection in two passes (corroborate first, then
+  finalize each lane) instead of one, so `_analyze_lane_detailed` (new
+  `exclude_bands` param) can drop the corroborated band from both the
+  purity% denominator and target-selection eligibility before either
+  selection branch runs -- benefiting `mw-strict`'s purity% too, not just
+  `largest`'s selection. 7 new tests (2 real-data regression + integration,
+  5 unit on the new helpers); a full synthetic multi-lane reproduction was
+  attempted and abandoned -- `make_synthetic_gel`'s simple gaussian bands
+  either get absorbed by baseline correction (if smooth/wide) or produce
+  nested duplicate peak detections a real photographed gel doesn't (if
+  built from stacked narrower gaussians) -- the real-image regression test
+  is the trustworthy check here, not a synthetic one. 107/107 tests pass.
+- **HITL review UI, Phase 2.1 (2026-07-22, same day as Phase 2) --
+  delete-band correction, bulk lane clearing, contrast invert.** Three
+  small UI additions to `scripts/hitl_ui_server.py`/`scripts/hitl_ui_static/
+  review.html`, prompted by real usage surfacing gaps Phase 2 didn't cover.
+  - **Delete band** (new toolbar mode, enabled only after a successful
+    Analyze): clicking any shown band box removes it from that lane's
+    purity-percent denominator via a new tested `exclude_deleted_bands`
+    helper in `core/band_propagation.py`. If the deleted band was the one
+    selected as the target, the lane falls back to "unmatched" rather than
+    silently promoting a different candidate -- a deliberate choice, not an
+    oversight (a confidently-wrong auto-substitute defeats the point of a
+    human-verified pick). Persisted into the correction-record JSON (new
+    `deleted_bands` field) so `evaluate_human_assisted_propagation.py`'s
+    replay honors it too, once real (not mechanically-authored) records
+    carry it. Directly the fix referenced by Phase 2's "Known current
+    limitation" note above.
+  - **Delete all lanes** button: bulk version of the existing per-lane
+    Delete-lane mode, for redrawing every lane by hand rather than one at a
+    time.
+  - **Contrast "invert (negative)"** button added; the "boost faint
+    signal" percentile-clip preset from Phase 2 was removed the same day
+    at Jacob's request as not useful in practice -- contrast options are
+    now just default / invert, both applied only to the background gel
+    image so lane/band overlay colors stay legible against either.
+  - Separately, same day: `find_nearest_band`/`propagate_target_band` in
+    `core/band_propagation.py` gained a `require_unambiguous` parameter --
+    see "Ambiguity-gate tolerance" in Known Limitations for the full
+    story (real usage found the ambiguity safeguard rejecting visually
+    obvious correct matches on both the reference click and series-lane
+    propagation).
+  - Committed to git: only `core/band_propagation.py`'s
+    `exclude_deleted_bands`/`require_unambiguous` changes plus tests/docs
+    (commit `a2ae7a0`). The Flask server/UI changes themselves stay
+    gitignored under `scripts/`, same as Phase 2.
+  - Also this session: removed two pieces of genuinely dead code found
+    during a full unused-code audit -- `core/snake_lanes.py`'s
+    `SnakeTrace` dataclass (never constructed; the module's real pipeline
+    entry point returns a raw tuple instead) and `purity/output.py`'s
+    `format_json` (never called; `purity/cli.py` builds JSON output via
+    `to_payload()` + `json.dumps()` directly). Confirmed via `ridge_lanes.py`'s
+    similarly-low-usage `analyze_image_ridge` that NOT everything with few
+    callers is dead -- that one is an intentional bypassed prototype path,
+    documented as such in `_run_ridge`'s own comments, and was left alone.
+  - **Two further real-usage fixes, 2026-07-22, same prototype:**
+    (a) the "Show band pixels" debug-overlay checkbox could get stuck
+    permanently on once "Delete band" mode was entered, because `redraw()`
+    forced the overlay on for that mode instead of just defaulting the
+    checkbox once as a convenience -- fixed by making the checkbox the sole
+    authority in `redraw()`'s condition, with `setMode()` auto-checking it
+    (not re-forcing it) only the first time Delete-band mode is entered;
+    (b) after "Delete all lanes" (or manually deleting every lane down to
+    zero), the first lane drawn back in didn't automatically become the
+    ladder lane, forcing an annoying toggle-off/toggle-on of the ladder
+    dropdown -- fixed so the first lane drawn from an empty lane list
+    defaults to `is_ladder: true` (any lane drawn after that one never
+    reassigns the ladder), and the dropdown's option labels were renamed
+    from "Position #" to "Lane #" for clarity. Both fixes are
+    `scripts/`-only, gitignored, same as the rest of Phase 2/2.1.
+- **HITL productionization design opened as GH issue #1, 2026-07-23.**
+  After enough real usage of the Phase 2/2.1 prototype to be confident the
+  interaction model works, the next step is packaging it as an embeddable
+  widget in `ebase` (the destination this section's Phase 2 entry already
+  named) rather than continuing to extend the disposable Flask/canvas
+  prototype. Investigated `plate-map` (the existing `ebase`-embedded
+  well-set editor) as the reference precedent, plus `ebase`'s own
+  `plate_color_extractor` integration (a sibling Python repo cloned by
+  Capistrano for real image processing) as the closest existing shape for
+  a Python-backed tool like this one. Full design -- why this doesn't get
+  ported to JS, why the JS side ships as plain vendored ES modules with no
+  bundler rather than an npm package, the productionized API's cache-
+  isolation/concurrency/auth/versioning/idempotency requirements, and the
+  remaining open questions (DB schema, process supervision) -- is tracked
+  in **GH issue #1** (https://github.com/nebiolabs/gel-image-extractor/issues/1),
+  not duplicated here. Nothing from that design is implemented yet.
 
 ## Planned Features — Not Yet Built
 
@@ -1120,6 +1396,18 @@ without confirming scope first (see Working Agreements).
 - **Second (class/method call-flow) mermaid diagram** — see Architecture
   Diagram section below; tracked in memory
   ([[planned_call_flow_diagram]]), not yet built.
+- **End-user-facing band-visualization debug view in `ebase`** — requested
+  2026-07-22, after Jacob used the human-in-the-loop prototype's new
+  debug toggle (target band bright green, every other detected band
+  bright magenta, filled directly on the image) and confirmed it's
+  independently valuable to end users, not just a developer debugging
+  aid. Confirmed no git action needed right now, just that the capability
+  must not be lost: `src/gel_extractor/purity/debug_viz.py` already does
+  the outline-style version of this, git-tracked, wired to `--debug` — that
+  is the durable home for the requirement when this reaches `ebase`, not
+  the disposable HITL prototype. See memory `ebase_hosting`. Tracked
+  alongside the broader productionization design in GH issue #1 (see
+  Implementation Status above).
 
 ## Known Limitations — Flagged for Later
 
@@ -1171,6 +1459,113 @@ recorded here specifically so they aren't lost or re-litigated from scratch.
   batch operates at: **zero of its 1,321 images have any confirmed purity/
   MW at all** (see Implementation Status) — that batch's findings are
   structural/consistency signals only, not accuracy validation.
+- **Confirmed real correctness bug, 2026-07-22: `band_selection="largest"`
+  (the default) can select a top-of-gel artifact as the target band,
+  not a real protein.** Surfaced via the HITL prototype's new debug
+  overlay on `8.6.25 Protein Purity.tif`: `detect_comb_fringe_end`
+  correctly crops past the comb teeth themselves, but a separate, broad
+  (~80-90 row), roughly uniform-intensity region immediately follows in
+  every one of the 8 sample lanes at nearly identical extent regardless
+  of dilution -- Jacob confirmed by eye he doesn't recognize it as a real
+  physical feature (unlike the bottom cassette/tape-edge shadow, which he
+  did confirm is real and physical). Running the actual automatic pipeline
+  (`target_mw=None`, `band_selection="largest"`) on this image confirms
+  the bug is live, not hypothetical: lanes 4-8 select this artifact as
+  their "largest" band and report 137-218 kDa, while a real human click on
+  lanes 1-3 (via the HITL tool) finds the true target at ~59-60 kDa. A
+  width-outlier survey across all 15 ground-truth images (first-detected-
+  band width vs. other-bands'-median-width per lane) showed this is real
+  but *not* a fixed-position pattern: in several other images (e.g.
+  `6.12.26 PDEV1718 Protein Purity.tif`) the first band after crop is
+  narrow/legitimate and it's *later* bands that are the wide outliers
+  instead -- ruling out a blanket "skip whatever's right after the comb"
+  position-based rule. **Fixed 2026-07-22 for lanes 4-7 of this image**
+  via cross-lane corroboration -- see Implementation Status's dated entry
+  for the fix, the two rejected candidate approaches, and full validation.
+  **Still open: lane 8 of this same image remains wrong** (still reports
+  217.8 kDa) -- its version of the artifact never satisfied the
+  corroboration rule's per-lane "widest AND closest to top" precondition,
+  a separate, not-yet-understood case within the same broader problem.
+  Affects every analysis using the `largest`/`largest-unverified` path --
+  which includes the entire 2026-07-20 Formulation & Purification
+  Discovery batch -- so this may partially explain that batch's 72%
+  structural-flag rate rather than being a new, separate issue; the fix's
+  effect on that batch specifically hasn't been re-measured.
+- **Confirmed real, tabled 2026-07-22: burned-in caption text can be
+  detected as a real band, not just confuse lane detection.** Surfaced
+  visually via the HITL prototype's debug overlay on two real images
+  (`8.6.25 Protein Purity.tif`, `10.31.25 PDEV1437.tif`) -- a caption like
+  "HpyCH4IV PID1284" or "R-218 TET3 / PDEV1437", burned directly into the
+  photo pixels in the lower-left corner, sits within one or more lanes'
+  column range and gets picked up by `detect_bands` as if it were real
+  signal. Distinct from (but related to) the already-documented
+  lane-*detection* instance of burned-in text above -- this is
+  band-*detection* picking up text that survives inside an otherwise
+  correctly-detected lane. **Not the same bug the cross-lane
+  corroboration fix (above) addresses** -- that fix only catches a band
+  that's simultaneously widest and closest to the *top* crop boundary in
+  its own lane; a caption low in the frame doesn't match that shape.
+  Jacob confirmed: the caption's location is inconsistent enough (it can
+  overlap the ladder lane in one image, sample lanes in another) that a
+  fixed positional mask isn't reliable on its own. Three pixel-statistic
+  heuristics were tried and rejected, calibrated against real caption
+  regions across both images before any code was written: (1) cross-lane-
+  width intensity variance (text strokes vs. smooth band) -- backwards on
+  3 of 5 lanes tested; (2) signal bleeding into the empty gaps between
+  lanes (real protein never does this) -- no clean separation, background
+  intensity drift swamps the effect; (3) 2D gradient/edge density (sharp
+  text strokes vs. smooth gaussian blob) -- inconsistent, because a
+  caption isn't uniformly "text" across its width -- a lane's column-slice
+  through it can land on a letter stroke or on blank space between
+  letters, and averaging over the lane's width washes out the difference
+  either way. **Tabled, not solved.** The real fix is believed to be
+  genuine text detection (e.g. OCR via `pytesseract`) to locate and mask
+  the actual text bounding box regardless of position, rather than
+  inferring "text-ness" from band shape/statistics -- a real scope
+  increase (new Python dependency, a new system-level `tesseract` binary,
+  a new masking step before lane/band detection runs), not a quick
+  follow-up. Worth factoring into the `ebase` hosting discussion
+  ([[ebase_hosting]]) if pursued, the same way the SAM/torch dependency
+  weight was.
+- **Ambiguity-gate tolerance (`DEFAULT_ROW_TOLERANCE_FRACTION`): both the
+  reference click and series-lane propagation now bypass it entirely,
+  2026-07-22.** Jacob hit "ambiguous --
+  two candidates too close to call" repeatedly clicking reference bands via
+  the HITL tool, including a case (screenshotted) where the crosshair
+  landed squarely on the correct band but a smaller adjacent band still
+  tripped the check. Root cause, first diagnosed earlier the same day:
+  `band_propagation.find_nearest_band`'s tolerance (`row_tolerance()`, a
+  fixed 5% of a lane's resolving height by default) was controlling two
+  opposing things from one constant: (a) how far a click can be from a real
+  band and still count at all, and (b) -- via `tolerance / 2` -- how much
+  separation two candidate bands need before one wins over the other. The
+  first pass concluded the *constant itself* wasn't safely tunable without
+  a full 15-image calibration pass (shrinking/growing it just traded one
+  false-refusal mode for the other). Resolution reached here is narrower
+  and doesn't touch the constant: `find_nearest_band` gained a
+  `require_unambiguous: bool = True` parameter, and `hitl_ui_server.py`'s
+  one direct-human-click call site (matching the reference lane's own
+  click) now passes `require_unambiguous=False`, so it just snaps to the
+  nearest band within tolerance and skips the ambiguity check outright.
+  `propagate_target_band`'s per-lane series matching *also* now passes
+  `require_unambiguous=False` (same-day follow-up, once Jacob noticed
+  series lanes were still coming back blank/unmatched on the same kind of
+  close-candidate case the reference click had just been fixed for): the
+  original reasoning for treating the two call sites differently --
+  propagated lanes have "no direct visual confirmation, unlike the click
+  itself" -- doesn't actually hold, since every lane's result (reference or
+  propagated) is shown via the same band overlay and correctable with the
+  same "Delete band" action. So there's no real distinction left between
+  "a human clicked this" and "this was propagated" for ambiguity-tolerance
+  purposes, and both call sites now behave identically: snap to the
+  nearest band within tolerance, full stop. The `nearest_distance >
+  tolerance` cutoff (genuinely nothing near the expected row in that lane)
+  is unchanged and still returns `None` everywhere -- only the "two
+  candidates too close together" rejection was ever in question. **Change
+  made and shipped** (see `find_nearest_band`/`propagate_target_band` in
+  `core/band_propagation.py`); the `DEFAULT_ROW_TOLERANCE_FRACTION` value
+  itself is still unretuned pending that calibration pass, should it ever
+  be worth doing.
 
 ## Open Questions
 

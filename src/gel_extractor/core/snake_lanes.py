@@ -43,8 +43,6 @@ instead of a straight column range -- band detection, ladder calibration,
 and the purity-percentage formula are all `purity.analysis`'s, untouched.
 """
 
-from dataclasses import dataclass
-
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from skimage.segmentation import active_contour
@@ -98,18 +96,6 @@ DEFAULT_WINDOW_MARGIN_FRACTION = 0.75
 # width at runtime, not any fixed/comb-derived pitch (see AGENTS.md: the gel
 # is a flexible medium no longer locked to the comb once run).
 DEFAULT_SAMPLE_HALF_WIDTH_FRACTION = 0.5
-
-
-@dataclass(frozen=True)
-class SnakeTrace:
-    """A converged snake and the profile extracted along it, for one lane."""
-
-    lane_index: int
-    top_bound: int
-    snake: np.ndarray  # (K, 2) array of (row, col), in full-image coordinates
-    window_left: int
-    window_right: int
-    profile: np.ndarray  # one intensity value per row, top_bound..bottom_bound
 
 
 def lane_window_bounds(
