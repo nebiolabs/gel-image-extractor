@@ -1408,6 +1408,71 @@ kept here is every decision, root cause, and "don't retry X" warning.
   tests still pass post-rename. The repo is public on GitHub but has no
   LICENSE file yet — a real gap given the stated open-source goal, flagged
   but not yet resolved (license choice deferred, see Open Questions).
+- **`src/neband/api/` implemented, 2026-07-23** — the first real
+  implementation piece of GH issue #1's design (not just design). A
+  JSON-only Flask app productionizing `scripts/hitl_ui_server.py`'s two
+  routes, with no algorithm changes (every band-selection/propagation
+  decision still delegated to the same tested `core`/`purity.analysis`
+  calls) but several real architectural differences from the prototype:
+  - **Every request is self-contained.** Both `POST /v1/lanes/detect` and
+    `POST /v1/analyze` take the image as a multipart file part on *every*
+    call, not a server-side "currently loaded image." A cache miss or
+    eviction just costs one extra decode, never a broken session — a
+    deliberate simplification over the prototype's session-ish
+    `IMAGE_PATHS`/`get_signal` globals.
+  - **Fix #1 (image cache) implemented as designed**: `api/image_cache.py`'s
+    `ImageCache` keys on a SHA-256 hash of the raw uploaded bytes (an
+    identity the cache derives itself, not a caller-supplied name that
+    could collide), with LRU eviction bounded by both entry count and
+    total byte size. Documented as per-`gunicorn`-worker, not shared
+    across processes — a deliberate scope call (redundant per-worker
+    decoding is an acceptable cost; a cross-process shared cache like
+    Redis isn't warranted unless real usage shows otherwise).
+  - **Fix #2 (concurrency)**: `api/wsgi.py` is the `gunicorn` entrypoint
+    (`gunicorn --workers N 'neband.api.wsgi:app'`), documented as
+    process-based specifically because `detect_lanes`/`detect_bands`/
+    `calibrate_ladder` are CPU-bound under the GIL — threads wouldn't help.
+  - **Fix #3 (auth)**: no built-in end-user auth; the app documents that
+    the primary boundary is network-level (bind to localhost/a Unix
+    socket, or a reverse proxy). An optional `X-Neband-Api-Key` header
+    check is available as defense-in-depth (`create_app(api_key=...)` or
+    `NEBAND_API_KEY` env var), off entirely if unset.
+  - **`known_mws` (ladder calibration) is a per-request field now**, not a
+    server-startup global like the prototype's `KNOWN_MWS` — a real API
+    serving arbitrary callers can't assume one fixed ladder for the whole
+    process lifetime.
+  - **Deliberately NOT ported**: correction-record JSON writing
+    (`data/hitl_correction_records/*.json`). That's specific to this
+    repo's own offline evaluation workflow
+    (`scripts/evaluate_human_assisted_propagation.py`), not a general
+    capability — persisting a submitted review is the embedding
+    application's job (e.g. `ebase`'s own `GelImage` model), not this
+    package's, per the issue's Architecture section.
+  - Fix #4 (contract-drift-by-construction) and Fix #5 (idempotent submit)
+    are not applicable to this package specifically — #4 is a property of
+    how the widget and this API get deployed together (both from one
+    pinned git ref), not code inside either one; #5 lives in `ebase`'s
+    Rails "submit" endpoint (this API has no submit/persistence concept at
+    all, by the point above).
+  - New optional dependency group `pyproject.toml`'s `[project.optional-
+    dependencies].api` (`flask`, `gunicorn`) — install via `neband[api]`,
+    not a core dependency (same "keep heavy/optional deps opt-in"
+    reasoning as `sam-zeroshot`).
+  - 29 new tests (`tests/test_api_image_cache.py`,
+    `tests/test_api_analysis.py`, `tests/test_api_app.py`) — cache
+    isolation/eviction in isolation from Flask, pure-function analysis
+    tests against synthetic gels (including one exercising real ladder MW
+    calibration), and Flask-test-client integration tests for both routes
+    plus the API-key auth gate. 141/141 total passing.
+  - Manually verified end-to-end over real HTTP against a real image
+    (`8.6.25 Protein Purity.tif`, port 5199 to avoid the live dev
+    prototype's own session on 5051): `/healthz`, `/v1/lanes/detect`
+    (10 real lanes auto-detected), and `/v1/analyze` with `--ladder
+    P7719` all returned correct results, MW calibration landing at
+    ~59-60 kDa matching this image's already-known ground truth.
+  - Not yet built (tracked in GH issue #1, unaffected by this entry):
+    `web/` (the JS widget itself), any `ebase`-side changes, npm
+    publishing.
 
 ## Planned Features — Not Yet Built
 

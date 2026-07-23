@@ -11,6 +11,16 @@ dependencies = [
     "pillow>=10.0",
 ]
 
+[project.optional-dependencies]
+# Productionized HTTP API (src/neband/api/) -- install via `neband[api]`.
+# Not a core dependency: most consumers only need the CLI/library, per the
+# same "keep heavy/optional deps opt-in" reasoning as sam-zeroshot. See GH
+# issue #1 for the full design and `src/neband/api/wsgi.py` for running it.
+api = [
+    "flask>=3.0",
+    "gunicorn>=22.0",
+]
+
 [project.scripts]
 neband = "neband.cli:main"
 
@@ -24,4 +34,5 @@ packages = ["src/neband"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "neband[api]",
 ]

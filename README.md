@@ -8,13 +8,18 @@ renamed 2026-07-23 as part of packaging this for reuse beyond `ebase`; see
 
 ## Status
 
-**Purity workflow: implemented and tested** (112 tests, all passing).
+**Purity workflow: implemented and tested** (141 tests, all passing).
 **Activity workflow: not started.** See `AGENTS.md` for full project scope, data
 inventory, working agreements, design decisions, implementation notes
 (including real findings from running this against real gel images), and a
 "Known Limitations" section tracking open issues that shouldn't be silently
 fixed or forgotten. `diagrams/program-flow.png` (or the `.mmd` source) has
 the current architecture sketch.
+
+**Also in progress**: a productionized HTTP API (`src/neband/api/`,
+optional — install via `neband[api]`) for the human-in-the-loop gel-review
+widget being packaged for embedding in `ebase` and beyond. See GH issue #1
+for the full design; `web/` (the JS widget itself) doesn't exist yet.
 
 ### MVP scope — read this before trusting a number
 
@@ -158,7 +163,7 @@ See `AGENTS.md` for the full rationale.
   `data/`, plus the dilution-series self-consistency check (same sample,
   same purity % across dilutions — our main correctness signal, since no
   external ground truth exists) encoded as an actual automated test. Purity
-  currently has 112 tests, all passing.
+  currently has 141 tests, all passing.
 - **Reporting precision:** `purity_percent` rounds to the nearest whole
   percent (not 1 decimal) — deliberately, given the pipeline's known
   real-world imprecision.
