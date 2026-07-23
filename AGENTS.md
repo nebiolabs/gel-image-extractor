@@ -1356,6 +1356,37 @@ kept here is every decision, root cause, and "don't retry X" warning.
     similarly-low-usage `analyze_image_ridge` that NOT everything with few
     callers is dead -- that one is an intentional bypassed prototype path,
     documented as such in `_run_ridge`'s own comments, and was left alone.
+  - **Two further real-usage fixes, 2026-07-22, same prototype:**
+    (a) the "Show band pixels" debug-overlay checkbox could get stuck
+    permanently on once "Delete band" mode was entered, because `redraw()`
+    forced the overlay on for that mode instead of just defaulting the
+    checkbox once as a convenience -- fixed by making the checkbox the sole
+    authority in `redraw()`'s condition, with `setMode()` auto-checking it
+    (not re-forcing it) only the first time Delete-band mode is entered;
+    (b) after "Delete all lanes" (or manually deleting every lane down to
+    zero), the first lane drawn back in didn't automatically become the
+    ladder lane, forcing an annoying toggle-off/toggle-on of the ladder
+    dropdown -- fixed so the first lane drawn from an empty lane list
+    defaults to `is_ladder: true` (any lane drawn after that one never
+    reassigns the ladder), and the dropdown's option labels were renamed
+    from "Position #" to "Lane #" for clarity. Both fixes are
+    `scripts/`-only, gitignored, same as the rest of Phase 2/2.1.
+- **HITL productionization design opened as GH issue #1, 2026-07-23.**
+  After enough real usage of the Phase 2/2.1 prototype to be confident the
+  interaction model works, the next step is packaging it as an embeddable
+  widget in `ebase` (the destination this section's Phase 2 entry already
+  named) rather than continuing to extend the disposable Flask/canvas
+  prototype. Investigated `plate-map` (the existing `ebase`-embedded
+  well-set editor) as the reference precedent, plus `ebase`'s own
+  `plate_color_extractor` integration (a sibling Python repo cloned by
+  Capistrano for real image processing) as the closest existing shape for
+  a Python-backed tool like this one. Full design -- why this doesn't get
+  ported to JS, why the JS side ships as plain vendored ES modules with no
+  bundler rather than an npm package, the productionized API's cache-
+  isolation/concurrency/auth/versioning/idempotency requirements, and the
+  remaining open questions (DB schema, process supervision) -- is tracked
+  in **GH issue #1** (https://github.com/nebiolabs/gel-image-extractor/issues/1),
+  not duplicated here. Nothing from that design is implemented yet.
 
 ## Planned Features — Not Yet Built
 
@@ -1374,7 +1405,9 @@ without confirming scope first (see Working Agreements).
   must not be lost: `src/gel_extractor/purity/debug_viz.py` already does
   the outline-style version of this, git-tracked, wired to `--debug` — that
   is the durable home for the requirement when this reaches `ebase`, not
-  the disposable HITL prototype. See memory `ebase_hosting`.
+  the disposable HITL prototype. See memory `ebase_hosting`. Tracked
+  alongside the broader productionization design in GH issue #1 (see
+  Implementation Status above).
 
 ## Known Limitations — Flagged for Later
 
