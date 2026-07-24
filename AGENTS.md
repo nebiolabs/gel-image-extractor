@@ -1519,6 +1519,26 @@ kept here is every decision, root cause, and "don't retry X" warning.
     should be blocked.
   Full schema detail lives in GH issue #1's own "DB Schema" section, not
   duplicated further here.
+- **`ebase` process supervision settled, 2026-07-24.** The other
+  outstanding GH issue #1 infra question -- resolved once Jacob confirmed
+  `ebase` runs on a Linux VM with `systemd` (the one genuinely missing
+  fact; not an engineering call to make blind). Jacob didn't want a
+  permanently-running Python process and asked about standing it up on
+  demand with an idle timeout instead. Answer: **systemd socket
+  activation, 15-minute idle timeout** -- a `.socket` unit listens
+  persistently at near-zero cost, and only starts the real `gunicorn`
+  process (`neband.api.wsgi:app`) when a real connection arrives; the app
+  tracks time since its last request (one global timestamp, consistent
+  with the API's existing stateless-per-request design) and exits on its
+  own after 15 idle minutes, with the socket transparently restarting it
+  on the next request -- no custom "check if it's up" logic needed in
+  Rails. Accepted trade-off: the first request after an idle period pays
+  a cold-start cost (Python interpreter boot + `numpy`/`scipy`/
+  `scikit-image` import) -- judged acceptable since that cost is small
+  for this plain-Flask-worker stack, unlike the much heavier model-load
+  cost that sank the earlier "no persistent warm SAM model" decision.
+  Full detail in GH issue #1's "Process Supervision" section, not
+  duplicated further here.
 
 ## Planned Features — Not Yet Built
 
