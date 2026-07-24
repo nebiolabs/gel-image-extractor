@@ -1387,10 +1387,10 @@ kept here is every decision, root cause, and "don't retry X" warning.
   ported to JS, why the JS side ships as plain vendored ES modules with no
   bundler rather than an npm package, the productionized API's cache-
   isolation/concurrency/auth/versioning/idempotency requirements, and the
-  remaining open questions (DB schema -- **resolved 2026-07-24, see
-  below** -- and process supervision, still open) -- is tracked
-  in **GH issue #1** (https://github.com/nebiolabs/neband/issues/1),
-  not duplicated here. Nothing from that design is implemented yet.
+  DB schema, process supervision, and `web/` widget design --
+  **all resolved 2026-07-24, see below** -- is tracked in **GH issue #1**
+  (https://github.com/nebiolabs/neband/issues/1), not duplicated here.
+  Nothing from that design is implemented yet.
 - **Project renamed `gel-image-extractor` -> `neband`, 2026-07-23.** Once
   the packaging goal was clarified as "reusable/open-sourceable in any
   context, `ebase` is the first validated consumer, not the only one" (see
@@ -1539,6 +1539,28 @@ kept here is every decision, root cause, and "don't retry X" warning.
   cost that sank the earlier "no persistent warm SAM model" decision.
   Full detail in GH issue #1's "Process Supervision" section, not
   duplicated further here.
+- **`ebase` widget (`web/`) design settled, 2026-07-24** -- design-only,
+  same question-by-question working style as the DB schema above, worked
+  through before any `web/` code exists. Six initial questions (rendering,
+  Analyze/Submit split, existing-vs-fresh state, transport, dropped
+  multi-image picker, contrast/debug-overlay both kept) plus three
+  follow-ons (state notification, Submit payload shape, module
+  boundaries) all resolved. Notably: the transport question (does the
+  widget own `fetch`/URLs, or call host callbacks?) was resolved by
+  reading `ebase`'s actual `plate-map` integration rather than reasoning
+  abstractly -- `plate-map`'s own AJAX code has zero CSRF-handling
+  because an app-wide jQuery `ajaxSend` hook (`app/javascript/js/core.js`)
+  injects the token for it, but that hook is jQuery-specific and doesn't
+  cover the new widget's plain `fetch` (deliberately jQuery-free). Fix
+  needed no host cooperation at all: Rails' CSRF token lives at a
+  standard DOM location (`<meta name="csrf-token">`), so the widget reads
+  it directly and degrades harmlessly on non-Rails hosts. Submit is
+  full-state overwrite (no row IDs, matching the DB schema's own
+  "overwrite in place" semantics) and gated on "analyzed since last edit"
+  via a `neband:statechange` `CustomEvent` on the widget's container.
+  `web/src/*.js` module split: `state.js` / `canvas.js` / `api-client.js`
+  / `interactions.js` / `widget.js`. Full detail in GH issue #1's "Widget
+  Design" section, not duplicated further here.
 
 ## Planned Features — Not Yet Built
 
