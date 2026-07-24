@@ -1387,7 +1387,8 @@ kept here is every decision, root cause, and "don't retry X" warning.
   ported to JS, why the JS side ships as plain vendored ES modules with no
   bundler rather than an npm package, the productionized API's cache-
   isolation/concurrency/auth/versioning/idempotency requirements, and the
-  remaining open questions (DB schema, process supervision) -- is tracked
+  remaining open questions (DB schema -- **resolved 2026-07-24, see
+  below** -- and process supervision, still open) -- is tracked
   in **GH issue #1** (https://github.com/nebiolabs/neband/issues/1),
   not duplicated here. Nothing from that design is implemented yet.
 - **Project renamed `gel-image-extractor` -> `neband`, 2026-07-23.** Once
@@ -1473,6 +1474,51 @@ kept here is every decision, root cause, and "don't retry X" warning.
   - Not yet built (tracked in GH issue #1, unaffected by this entry):
     `web/` (the JS widget itself), any `ebase`-side changes, npm
     publishing.
+- **`ebase` DB schema settled and written into GH issue #1, 2026-07-24.**
+  Resolved through an iterative question-by-question working session
+  (Jacob answering one design question at a time, rather than the whole
+  shape being proposed at once), including a `/challenge` pass that caught
+  a real gap before any Rails code exists: a single flat "reprocess
+  destroys and recreates everything" story would have silently thrown away
+  a reviewer's manual lane-boundary/exclude work on every routine
+  reanalysis. Three models, not implemented yet (design only, same as the
+  rest of GH issue #1):
+  - `GelExperiment` (`has_one_attached :image`) -- the physical upload,
+    status (pending/reviewed/submitted), plus analysis-config metadata
+    (ladder part, `target_mw`, band-selection mode).
+  - `GelResultLane` (`belongs_to :gel_experiment`, one row per lane
+    including excluded ones) -- geometry (`x_start`/`x_end`/`top_bound`/
+    `bottom_bound`), `is_ladder`, `manual_exclude`, `missed` (bool) +
+    `miss_reason` (text, matches the API's own field name) kept as two
+    columns deliberately (not derived at query time) so missed-lane rate
+    can be trended via a fast indexed boolean, `purity_percent`/
+    `matched_mw`.
+  - `GelResultBand` (`belongs_to :gel_result_lane`, one row per detected
+    band -- a plain child table with a FK, not a JSON array column, is how
+    an unknown number of bands gets captured) -- `y_start`/`y_end`,
+    `is_target`, `area` (already the trapezoidal intensity integral from
+    `core/bands.py`'s `detect_bands`, not a plain pixel count -- so it
+    already fully encodes intensity, contrary to an initial assumption
+    that area and intensity were being conflated).
+  - **Two distinct write operations, not one "reprocess"**: *reanalysis*
+    (common case, e.g. after changing ladder/`target_mw`/band-selection
+    mode) leaves lane geometry and `manual_exclude` untouched, only
+    regenerating bands + the lane's outcome columns; *reset to
+    auto-detected* (the existing full-redo feature) wipes and recreates
+    lane geometry from scratch, including resetting `manual_exclude` back
+    to `false`.
+  - Explicitly decided, not oversights: no history/versioning (both
+    operations overwrite/destroy in place), and no reviewer-interaction
+    audit trail at all (which pixel was clicked, which lanes were toggled,
+    which bands were deleted -- none of it persisted, only final state).
+  - Still open (tracked in the issue, not resolved here): whether `missed`
+    should be a plain column or a DB-generated column kept in sync with
+    `miss_reason`; a transaction boundary around the destroy+recreate
+    paths; a concurrency guard against two simultaneous reanalyze/reset
+    calls; and whether reprocessing an already-`submitted` experiment
+    should be blocked.
+  Full schema detail lives in GH issue #1's own "DB Schema" section, not
+  duplicated further here.
 
 ## Planned Features — Not Yet Built
 
